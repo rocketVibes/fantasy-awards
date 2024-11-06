@@ -44,10 +44,13 @@ class Fantasy_Team_Performance:
 
 	def set_potential(self, potential_high):
 		self.potential_high = potential_high
-		self.potential_used = '{:,.2%}'.format(self.score / potential_high)
+		self.potential_used = self.score / potential_high
 
 	def get_first_name(self):
 		return self.owner.split(' ', 1)[0]
+
+	def get_potential_used(self):
+		return '{:,.2%}'.format(self.potential_used)
 
 class Fantasy_Player:
 	def __init__(self, name, team_name, score, second_score=0):
@@ -127,14 +130,16 @@ class Fantasy_Service:
 	# Process team performances to be iterable
 	def process_matchup(self, lineup, team_name, score, owner_name, diff, vs_team_name, vs_owner):
 		lost_in_the_sauce = True
-		award_list = []
+		award_list, aw_list = [], []
 
 		# +++ AWARD teams who didn't make it to 100 points
 		if score < 100:
 			self.awards[team_name].append(f'SUB-100 CLUB ({score})')
-		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['WR'], ['TE'], ['WR', 'TE', 'WR/TE']]:
-			award_list += self.compute_start_sit(lineup, pos, team_name, diff)
-		self.process_award_list(award_list, team_name)
+		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['WR'], ['TE']]:
+			award_list += self.compute_start_sit(lineup, pos, pos, team_name, diff)
+
+		award_list += self.compute_start_sit(lineup, ['WR', 'TE'], ['WR/TE'], team_name, diff)
+		self.award(team_name, award_list)
 
 		bench_total = 0
 
@@ -142,24 +147,24 @@ class Fantasy_Service:
 			# Make pile of all players to iterate over 	
 			new_player = Fantasy_Player(player.name, team_name, player.points)
 			if player.points >= 40:
-				self.awards[team_name].append(f'40 BURGER ({player.name}, {player.points})')
+				self.award(team_name, [f'40 BURGER ({player.name}, {player.points})'])
 			if player.lineupSlot == 'BE' or player.lineupSlot == 'IR':
 				bench_total += player.points
 			if diff < 0 and player.lineupSlot not in ['BE', 'IR']:
 				if player.injuryStatus == 'QUESTIONABLE':
-					self.awards[team_name].append(f'INSULT TO INJURY - ({player.name}, {player.points})')
+					aw_list.append(f'INSULT TO INJURY - ({player.name}, {player.points})')
 			if player.lineupSlot not in ['K', 'BE', 'D/ST', 'IR']:
 				# If any players scored 3+ more than projected, the team is not lost in the sauce
 				if player.points >= player.projected_points + 3:
 					lost_in_the_sauce = False
 
 				# +++ AWARD players who scored 2x projected
-				if player.points >= 2 * player.projected_points:
-					self.awards[team_name].append(f'DAILY DOUBLE - {player.name} scored >2x projected ({player.points}, {player.projected_points} projected)')
+				if player.points > 0 and player.injuryStatus != 'QUESTIONABLE' and player.points >= 2 * player.projected_points:
+					self.award(team_name, [f'DAILY DOUBLE - {player.name} scored >2x projected ({player.points}, {player.projected_points} projected)'])
 
 				# +++ AWARD players who didn't get hurt but scored nothing
 				if player.injuryStatus == 'ACTIVE' and player.points == 0:
-					self.awards[team_name].append(f'OUT OF OFFICE - ({player.name}, 0)')
+					self.award(team_name, [f'OUT OF OFFICE - ({player.name}, 0)'])
 
 			# Compile lists of players at each position
 			match player.lineupSlot:
@@ -171,14 +176,14 @@ class Fantasy_Service:
 					# +++ AWARD if any starting QBs had equal num of TDs and INTs
 					if ints != 0 and tds == ints:
 						plural = 's' if tds > 1 else ''
-						self.awards[team_name].append(f'PERFECTLY BALANCED - {player.name} threw {int(tds)} TD{plural} and {int(ints)} INT{plural}')
+						self.award(team_name, [f'PERFECTLY BALANCED - {player.name} threw {int(tds)} TD{plural} and {int(ints)} INT{plural}'])
 				case 'TE':
 					self.tes.append(new_player)
 				case 'K':
 					self.ks.append(new_player)
 					# +++ AWARD kickers who somehow didn't score any points
 					if player.injuryStatus == 'ACTIVE' and player.points == 0:
-						self.awards[team_name].append(f'GO KICK ROCKS - Kicker scored 0')
+						self.award(team_name, [f'GO KICK ROCKS - Kicker scored 0'])
 				case 'RB':
 					self.rbs.append(new_player)
 				case 'WR':
@@ -189,94 +194,95 @@ class Fantasy_Service:
 					self.dsts.append(new_player)
 					# +++ AWARD defenses who sucked
 					if player.points < 2:
-						self.awards[team_name].append(f'THE BEST DEFENSE IS A GOOD OFFENSE - ({player.name}, {player.points})')
+						self.award(team_name, [f'THE BEST DEFENSE IS A GOOD OFFENSE - ({player.name}, {player.points})'])
 		
+		self.award(team_name, aw_list)
 		new_performance = Fantasy_Team_Performance(team_name, owner_name, score, diff, vs_team_name, vs_owner, lineup, bench_total)
 		self.scores.append(new_performance)
 		new_performance.set_potential(self.compute_potential(lineup, team_name, diff))
 
 		# +++ AWARD team whose players didn't exceed projected amount by 3+
 		if lost_in_the_sauce: 
-			self.awards[team_name].append('LOST IN THE SAUCE: No non-special-teams player scored 3+ more than projected')
+			self.award(team_name, ['LOST IN THE SAUCE: No non-special-teams starter scored 3+ more than projected'])
 
 	# Iterate over scores and teams to generate awards for each team
 	def generate_awards(self):
 		# Score-based awards
 		# +++ AWARD highest score of the week
 		highest = max(self.scores, key=attrgetter('score'))
-		self.awards[highest.team_name].append(f'BOOM GOES THE DYNAMITE - Highest weekly score ({highest.score})')
+		self.award(highest.team_name, [f'BOOM GOES THE DYNAMITE - Highest weekly score ({highest.score})'])
 
 		# +++ AWARD lowest score of the week 
 		lowest = min(self.scores, key=attrgetter('score'))
-		self.awards[lowest.team_name].append(f'ASSUME THE POSITION - Lowest weekly score ({lowest.score})')
+		self.award(lowest.team_name, [f'ASSUME THE POSITION - Lowest weekly score ({lowest.score})'])
 	
 		# +++ AWARD lowest scoring winner
 		fort_son = min([x for x in self.scores if x.diff > 0], key=attrgetter('score'))
-		self.awards[fort_son.team_name].append(f'FORTUNATE SON - Lowest scoring winner ({fort_son.score})')
+		self.award(fort_son.team_name, [f'FORTUNATE SON - Lowest scoring winner ({fort_son.score})'])
 
 		# +++ AWARD highest scoring loser
 		tough_luck = max([x for x in self.scores if x.diff < 0], key=attrgetter('score'))
-		self.awards[tough_luck.team_name].append(f'TOUGH LUCK - Highest scoring loser ({tough_luck.score})')
+		self.award(tough_luck.team_name, [f'TOUGH LUCK - Highest scoring loser ({tough_luck.score})'])
 
 		# +++ AWARD largest margin of victory
 		big_margin = max(self.scores, key=attrgetter('diff'))
-		self.awards[big_margin.team_name].append(f'TOTAL DOMINATION - Beat opponent by largest margin ({big_margin.vs_owner} by {round(big_margin.diff, 2)})')
+		self.award(big_margin.team_name, [f'TOTAL DOMINATION - Beat opponent by largest margin ({big_margin.vs_owner} by {round(big_margin.diff, 2)})'])
 
 		# +++ AWARD team that lost with smallest margin of victory
 		small_margin = min([x for x in self.scores if x.diff > 0], key=attrgetter('diff'))
-		self.awards[small_margin.vs_team_name].append(f'SECOND BANANA - Beaten by slimmest margin ({small_margin.get_first_name()} by {round(small_margin.diff, 2)})')
+		self.award(small_margin.vs_team_name, [f'SECOND BANANA - Beaten by slimmest margin ({small_margin.get_first_name()} by {round(small_margin.diff, 2)})'])
 		
 		# +++ AWARD team that won with smallest margin of victory
-		self.awards[small_margin.team_name].append(f'GEEKED FOR THE EKE - Beat opponent by slimmest margin ({small_margin.vs_owner} by {round(small_margin.diff, 2)})')
+		self.award(small_margin.team_name, [f'GEEKED FOR THE EKE - Beat opponent by slimmest margin ({small_margin.vs_owner} by {round(small_margin.diff, 2)})'])
 
 		# +++ AWARD best manager who scored most of available points from roster
 		potential_high = max(self.scores, key=attrgetter('potential_used'))
-		self.awards[potential_high.team_name].append(f'MINORITY REPORT - Scored highest percentage of possible points from roster ({potential_high.potential_used} of {potential_high.potential_high})')
+		self.award(potential_high.team_name, [f'MINORITY REPORT - Scored highest percentage of possible points from roster ({potential_high.get_potential_used()} of {potential_high.potential_high})'])
 		
 		# +++ AWARD worst manager who scored least of available points from roster
 		potential_low = min(self.scores, key=attrgetter('potential_used'))
-		self.awards[potential_low.team_name].append(f'GOT BALLS - NONE CRYSTAL - Scored lowest percentage of possible points from roster ({potential_low.potential_used} of {potential_low.potential_high})')
+		self.award(potential_low.team_name, [f'GOT BALLS - NONE CRYSTAL - Scored lowest percentage of possible points from roster ({potential_low.get_potential_used()} of {potential_low.potential_high})'])
 		
 		# Individual player awards
 		# +++ AWARD QB high
 		qb_high = self.compute_top_scorer(self.qbs)
-		self.awards[qb_high.team_name].append(f'PLAY CALLER BALLER - QB high ({qb_high.get_last_name()}, {qb_high.score})')
+		self.award(qb_high.team_name, [f'PLAY CALLER BALLER - QB high ({qb_high.get_last_name()}, {qb_high.score})'])
 
 		# +++ AWARD TE high
 		te_high = self.compute_top_scorer(self.tes)
-		self.awards[te_high.team_name].append(f'TIGHTEST END - TE high ({te_high.get_last_name()}, {te_high.score})')
+		self.award(te_high.team_name, [f'TIGHTEST END - TE high ({te_high.get_last_name()}, {te_high.score})'])
 
 		# +++ AWARD D/ST high
 		d_st_high = self.compute_top_scorer(self.dsts)
-		self.awards[d_st_high.team_name].append(f'FORT KNOX - D/ST high ({d_st_high.name}, {d_st_high.score})')
+		self.award(d_st_high.team_name, [f'FORT KNOX - D/ST high ({d_st_high.name}, {d_st_high.score})'])
 
 		# +++ AWARD Compute K high
 		k_high = self.compute_top_scorer(self.ks)
-		self.awards[k_high.team_name].append(f'KICK FAST, EAT ASS - Kicker high ({k_high.get_last_name()}, {k_high.score})')
+		self.award(k_high.team_name, [f'KICK FAST, EAT ASS - Kicker high ({k_high.get_last_name()}, {k_high.score})'])
 
 		# +++ AWARD individual RB high
 		rb_high = self.compute_top_scorer(self.rbs)
-		self.awards[rb_high.team_name].append(f'SPECIAL DELIVERY: GROUND - RB high ({rb_high.get_last_name()}, {round(rb_high.score, 2)})')
+		self.award(rb_high.team_name, [f'SPECIAL DELIVERY: GROUND - RB high ({rb_high.get_last_name()}, {round(rb_high.score, 2)})'])
 
 		# +++ AWARD individual WR high
 		wr_high = self.compute_top_scorer(self.wrs)
-		self.awards[wr_high.team_name].append(f'SPECIAL DELIVERY: AIR - WR high ({wr_high.get_last_name()}, {round(wr_high.score, 2)})')
+		self.award(wr_high.team_name, [f'SPECIAL DELIVERY: AIR - WR high ({wr_high.get_last_name()}, {round(wr_high.score, 2)})'])
 
 		# +++ AWARD WR corps high
 		wr_total_high = self.compute_top_scorer(self.wrs, True)
-		self.awards[wr_total_high.team_name].append(f'DEEP THREAT - WR corps high ({round(wr_total_high.score, 2)})')
+		self.award(wr_total_high.team_name, [f'DEEP THREAT - WR corps high ({round(wr_total_high.score, 2)})'])
 
 		# +++ AWARD RB corps high
 		rb_total_high = self.compute_top_scorer(self.rbs, True)
-		self.awards[rb_total_high.team_name].append(f'PUT THE TEAM ON HIS BACKS - RB corps high ({round(rb_total_high.score, 2)})')
+		self.award(rb_total_high.team_name, [f'PUT THE TEAM ON HIS BACKS - RB corps high ({round(rb_total_high.score, 2)})'])
 
 		# +++ AWARD RB corps high
 		bench_total_high = max(self.scores, key=attrgetter('bench_total'))
-		self.awards[bench_total_high.team_name].append(f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})')
+		self.award(bench_total_high.team_name, [f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})'])
 
 		biggest_mistake = max(self.mistakes, key=attrgetter('diff'))
-		self.awards[biggest_mistake.team_name].append(f'BIGGEST MISTAKE - Starting {biggest_mistake.get_mistake_first()} ({biggest_mistake.score}) over {biggest_mistake.get_mistake_second()} ({biggest_mistake.second_score})')
-		self.do_sheet_awards()
+		self.award(biggest_mistake.team_name, [f'BIGGEST MISTAKE - Starting {biggest_mistake.get_mistake_first()} ({biggest_mistake.score}) over {biggest_mistake.get_mistake_second()} ({biggest_mistake.second_score})'])
+		# self.do_sheet_awards()
 
 		i = 1
 		for team_name in self.teams:
@@ -285,6 +291,54 @@ class Fantasy_Service:
 				print(award)
 			i += 1
 			print()
+
+	def award(self, team_name, award_list):
+		best_start_sit = 0
+		final_start_sit = ''
+		new_award_list = award_list.copy()
+		injury = 'INSULT TO INJURY - '
+
+		for award in award_list:
+			if 'START/SIT' in award:
+				index = award.find('(')+1
+				index2 = award.find(')')
+				index3 = award.find('(', index2)+1
+				index4 = award.find(')', index3)
+				first = award[index:index2]
+				second = award[index3:index4]
+				
+				new_diff = float(second) - float(first)
+					
+				if new_diff > best_start_sit:
+					best_start_sit = new_diff
+					final_start_sit = award
+
+			elif 'BLUNDER' in award:
+				index1 = award.find('(')+1
+				index22 = award.find(')')
+				index33 = award.find('(', index22)+1
+				index44 = award.find(')', index33)
+				first1 = award[index1:index22]
+				second2 = award[index33:index44]
+
+				new_new_diff = float(first1) - float(second2)
+
+				if new_new_diff > best_start_sit:
+					best_start_sit = new_new_diff
+					final_start_sit = award
+
+			elif 'INSULT' in award:
+				index11 = award.find('(')
+				index12 = award.find(')')
+				injury += award[index11:index12] + ') '
+
+		if final_start_sit != '':
+			new_award_list = [final_start_sit]
+		if injury != 'INSULT TO INJURY - ':
+			new_award_list = [injury]
+
+		for award in new_award_list:
+			self.awards[team_name].append(award)
 
 	# UPDATE team names in sheet
 	def update_team_names(self, do_sheets_calls):
@@ -353,7 +407,6 @@ class Fantasy_Service:
 		except HttpError as error:
 			print(f"An error occurred: {error}")
 		
-
 	# UPDATE new column letter in sheet
 	def update_weekly_column(self, do_sheets_calls):
 		character = self.week + MAGIC_ASCII_OFFSET
@@ -374,7 +427,7 @@ class Fantasy_Service:
 		else:
 			print('No update sheets calls have been authorized: update_weekly_column')
 
-	# GET team order of weekly scores and UPDATE scores in new column for each team in sheet
+	# UPDATE weekly scores in new column for each team in sheet
 	def update_weekly_scores(self, do_sheets_calls):
 		column = chr(self.week + MAGIC_ASCII_OFFSET)
 		POINTS_RANGE_OUTPUT = 'POINTS!' + column + '3:' + column + '14'
@@ -449,9 +502,9 @@ class Fantasy_Service:
 				if i % 2 == 0:
 					if len(row) > 0 and len(row[3]) == 2 and int(row[3][1]) > 2:
 						if '▼' in row[3]:
-							self.awards[row[1].split('\n', 1)[0]].append('FREE FALLIN\' - Dropped 3 spots in the rankings')
+							self.award(row[1].split('\n', 1)[0], ['FREE FALLIN\' - Dropped 3 spots in the rankings'])
 						else:
-							self.awards[row[1].split('\n', 1)[0]].append('TO THE MOON! - Rose 3 spots in the rankings')
+							self.award(row[1].split('\n', 1)[0], ['TO THE MOON! - Rose 3 spots in the rankings'])
 				i += 1
 				
 		except HttpError as err:
@@ -517,7 +570,7 @@ class Fantasy_Service:
 		else:
 			print('No update sheets calls have been authorized: get_weekly_roster_rankings')
 
-	# GET team order for commens and UPDATE comment values in sheet
+	# UPDATE comment values in sheet
 	def update_comments(self, do_sheets_calls):
 		award_list = []
 		for row in self.teams:
@@ -543,7 +596,7 @@ class Fantasy_Service:
 		else:
 			print('No update sheets calls have been authorized: update_comments')
 
-	# Compute highest value for given position(s)
+	# Compute highest scorer for given list of players
 	def compute_top_scorer(self, players, grouped_stat=False):
 		filtered_dict = {}
 
@@ -574,42 +627,28 @@ class Fantasy_Service:
 		return round(total_potential, 2)
 
 	# Compare starter's score at a given position to the top scorer at that position on the team and award if benched player scored significantly higher
-	def compute_start_sit(self, roster, pos, team_name, diff):
-		starters = [player for player in roster if player.lineupSlot in pos]
+	def compute_start_sit(self, roster, pos, lineup_slot, team_name, diff):
+		starters = [player for player in roster if player.lineupSlot in lineup_slot]
 		benched_players = [player for player in roster if player.lineupSlot in ['BE', 'IR'] and player.position in pos]
 		award_list = []
-		for play in benched_players:
-			starter = min([player for player in starters if player.lineupSlot in pos], key=attrgetter('points'))
+		play = max(benched_players, key=attrgetter('points')) if len(benched_players) > 0 else None
+		starter = min(starters, key=attrgetter('points'))
+
+		if play != None:
 			if diff < 0 and play.points >= abs(diff) + starter.points:
 				award_list.append(f'BLUNDER - Starting {play.name} ({play.points}) over {starter.name} ({starter.points}) would have been enough to win (lost by {round(abs(diff), 2)})') 
-			elif diff < 0 and play.points >= starter.points * 2 and play.points >= starter.points + 5:
-				award_list.append(f'START/SIT, GET HIT - Benched {play.name} scored {play.points} compared to starter {starter.name} scoring {starter.points}')
+			elif diff < 0 and starter.injuryStatus != 'QUESTIONABLE' and play.points >= starter.points * 2 and play.points >= starter.points + 5:
+				award_list.append(f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {play.name} ({play.points})')
 			if play.points > starter.points:
 				self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
 		return award_list
-
-	# Find the greatest of the START/SIT awards to actually append to award list
-	def process_award_list(self, award_list, team_name):
-		best_start_sit = 0
-		final_start_sit = ''
-		for award in award_list:
-			if 'START/SIT' in award:
-				words = award.split()
-				index = words.index('scored')
-				index2 = words.index('scoring')
-				new_diff = float(words[index + 1]) - float(words[index2 + 1])
-				if new_diff > best_start_sit:
-					best_start_sit = new_diff
-					final_start_sit = award
-		if final_start_sit != '':
-			self.awards[team_name].append(final_start_sit)
-
+		
 service = Fantasy_Service()
-# service.generate_awards()
+service.generate_awards()
 
 # service.update_weekly_column(True)
 # service.update_weekly_scores(True)
-service.update_wins(True)
+# service.update_wins(True)
 
 # service.get_weekly_roster_rankings(True)
 # service.get_ros_roster_rankings(True)
