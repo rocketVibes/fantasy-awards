@@ -151,19 +151,19 @@ class Fantasy_Service:
 			if player.lineupSlot == 'BE' or player.lineupSlot == 'IR':
 				bench_total += player.points
 			if diff < 0 and player.lineupSlot not in ['BE', 'IR']:
-				if player.injuryStatus == 'QUESTIONABLE':
-					aw_list.append(f'INSULT TO INJURY - ({player.name}, {player.points})')
+				if player.injuryStatus not in ['ACTIVE', 'NORMAL']:
+					aw_list.append(f'INJURY TO INSULT - ({player.name}, {player.points})')
 			if player.lineupSlot not in ['K', 'BE', 'D/ST', 'IR']:
 				# If any players scored 3+ more than projected, the team is not lost in the sauce
 				if player.points >= player.projected_points + 3:
 					lost_in_the_sauce = False
 
 				# +++ AWARD players who scored 2x projected
-				if player.points > 0 and player.injuryStatus != 'QUESTIONABLE' and player.points >= 2 * player.projected_points:
+				if player.points > 0 and player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points >= 2 * player.projected_points:
 					self.award(team_name, [f'DAILY DOUBLE - {player.name} scored >2x projected ({player.points}, {player.projected_points} projected)'])
 
 				# +++ AWARD players who didn't get hurt but scored nothing
-				if player.injuryStatus == 'ACTIVE' and player.points == 0:
+				if player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points == 0:
 					self.award(team_name, [f'OUT OF OFFICE - ({player.name}, 0)'])
 
 			# Compile lists of players at each position
@@ -182,7 +182,7 @@ class Fantasy_Service:
 				case 'K':
 					self.ks.append(new_player)
 					# +++ AWARD kickers who somehow didn't score any points
-					if player.injuryStatus == 'ACTIVE' and player.points == 0:
+					if player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points == 0:
 						self.award(team_name, [f'GO KICK ROCKS - Kicker scored 0'])
 				case 'RB':
 					self.rbs.append(new_player)
@@ -263,18 +263,26 @@ class Fantasy_Service:
 		# +++ AWARD individual RB high
 		rb_high = self.compute_top_scorer(self.rbs)
 		self.award(rb_high.team_name, [f'SPECIAL DELIVERY: GROUND - RB high ({rb_high.get_last_name()}, {round(rb_high.score, 2)})'])
+		poss_doub = self.contains(self.awards[rb_high.team_name], 'DAILY DOUBLE', rb_high.name)
+		if poss_doub != None:
+			self.awards[rb_high.team_name].remove(poss_doub)
 
 		# +++ AWARD individual WR high
 		wr_high = self.compute_top_scorer(self.wrs)
 		self.award(wr_high.team_name, [f'SPECIAL DELIVERY: AIR - WR high ({wr_high.get_last_name()}, {round(wr_high.score, 2)})'])
+		poss_doub = self.contains(self.awards[wr_high.team_name], 'DAILY DOUBLE', wr_high.name)
+		if poss_doub != None:
+			self.awards[wr_high.team_name].remove(poss_doub)
 
 		# +++ AWARD WR corps high
 		wr_total_high = self.compute_top_scorer(self.wrs, True)
-		self.award(wr_total_high.team_name, [f'DEEP THREAT - WR corps high ({round(wr_total_high.score, 2)})'])
+		if wr_total_high.team_name != wr_high.team_name:
+			self.award(wr_total_high.team_name, [f'DEEP THREAT - WR corps high ({round(wr_total_high.score, 2)})'])
 
 		# +++ AWARD RB corps high
 		rb_total_high = self.compute_top_scorer(self.rbs, True)
-		self.award(rb_total_high.team_name, [f'PUT THE TEAM ON HIS BACKS - RB corps high ({round(rb_total_high.score, 2)})'])
+		if rb_total_high.team_name != rb_high.team_name:
+			self.award(rb_total_high.team_name, [f'PUT THE TEAM ON HIS BACKS - RB corps high ({round(rb_total_high.score, 2)})'])
 
 		# +++ AWARD RB corps high
 		bench_total_high = max(self.scores, key=attrgetter('bench_total'))
@@ -282,21 +290,34 @@ class Fantasy_Service:
 
 		biggest_mistake = max(self.mistakes, key=attrgetter('diff'))
 		self.award(biggest_mistake.team_name, [f'BIGGEST MISTAKE - Starting {biggest_mistake.get_mistake_first()} ({biggest_mistake.score}) over {biggest_mistake.get_mistake_second()} ({biggest_mistake.second_score})'])
-		# self.do_sheet_awards()
+		poss_doub = self.contains(self.awards[biggest_mistake.team_name], 'BLUNDER', biggest_mistake.get_mistake_first())
+		if poss_doub != None:
+			self.awards[biggest_mistake.team_name].remove(poss_doub)
+
+		self.do_sheet_awards()
 
 		i = 1
 		for team_name in self.teams:
 			print(f'{i}) {team_name[0]}')
+			num = len(self.awards[team_name[0]])
 			for award in self.awards[team_name[0]]:
-				print(award)
+				if num <= 4 or award != 'LOST IN THE SAUCE: No non-special-teams starter scored 3+ more than projected':
+					print(award)
 			i += 1
 			print()
 
+	def contains(self, awards, substring, player_name):
+		for award in awards:
+			if substring in award and player_name in award:
+				return award
+		return None
+
+	# Add awards with proper weighting to global self.awards
 	def award(self, team_name, award_list):
 		best_start_sit = 0
 		final_start_sit = ''
 		new_award_list = award_list.copy()
-		injury = 'INSULT TO INJURY - '
+		injury = 'INJURY TO INSULT - '
 
 		for award in award_list:
 			if 'START/SIT' in award:
@@ -334,7 +355,7 @@ class Fantasy_Service:
 
 		if final_start_sit != '':
 			new_award_list = [final_start_sit]
-		if injury != 'INSULT TO INJURY - ':
+		if injury != 'INJURY TO INSULT - ':
 			new_award_list = [injury]
 
 		for award in new_award_list:
@@ -637,7 +658,7 @@ class Fantasy_Service:
 		if play != None:
 			if diff < 0 and play.points >= abs(diff) + starter.points:
 				award_list.append(f'BLUNDER - Starting {play.name} ({play.points}) over {starter.name} ({starter.points}) would have been enough to win (lost by {round(abs(diff), 2)})') 
-			elif diff < 0 and starter.injuryStatus != 'QUESTIONABLE' and play.points >= starter.points * 2 and play.points >= starter.points + 5:
+			elif diff < 0 and starter.injuryStatus in ['ACTIVE', 'NORMAL'] and play.points >= starter.points * 2 and play.points >= starter.points + 5:
 				award_list.append(f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {play.name} ({play.points})')
 			if play.points > starter.points:
 				self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
