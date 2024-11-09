@@ -100,7 +100,9 @@ class Fantasy_Service:
 		for player in lineup:
 			# Make pile of all players to iterate over 	
 			new_player = Fantasy_Player(player.name, team_name, player.points)
-			if player.points >= 40:
+			if player.points >= 50:
+				self.award(team_name, f'50 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH', player.points * 1000)
+			elif player.points >= 40:
 				self.award(team_name, f'40 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH', player.points * 1000)
 			if player.lineupSlot == 'BE' or player.lineupSlot == 'IR':
 				bench_total += player.points
@@ -321,10 +323,6 @@ class Fantasy_Service:
 			if play.points > starter.points:
 				self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
 		return award
-# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
-# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
-# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
-# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
 
 service = Fantasy_Service()
 service.generate_awards()
