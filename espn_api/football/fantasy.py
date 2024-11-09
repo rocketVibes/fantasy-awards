@@ -6,6 +6,8 @@ from espn_api.football import Google_Sheet_Service
 import requests
 
 TREND_RANGE = 'A3:J25'
+HEALTHY = ['ACTIVE', 'NORMAL']
+BENCHED = ['BE', 'IR']
 
 # Flatten list of team scores as they come in box_score format
 class Fantasy_Team_Performance:
@@ -24,7 +26,14 @@ class Fantasy_Team_Performance:
 		self.potential_used = self.score / potential_high
 
 	def get_first_name(self):
-		return self.owner.split(' ', 1)[0]
+		if 'Aaron' in self.owner:
+			return 'Yates'
+		elif 'Nathan' in self.owner:
+			return 'Nate'
+		elif 'Dustin' in self.owner:
+			return 'Libby'
+		else: 
+			return self.owner.split(' ', 1)[0]
 
 	def get_potential_used(self):
 		return '{:,.2%}'.format(self.potential_used)
@@ -34,6 +43,8 @@ class Fantasy_Player:
 		self.name = name
 		self.team_name = team_name
 		self.score = score
+
+		# Special use of the Fantasy_Player class -- only to make it convenient to find the biggest mistake across the league
 		self.second_score = second_score
 		self.diff = self.score - self.second_score
 
@@ -43,9 +54,11 @@ class Fantasy_Player:
 	def get_first_name(self):
 		return self.name.split(None, 1)[0]
 
+	# Special use of the Fantasy_Player class -- only to make it convenient to find the biggest mistake across the league
 	def get_mistake_first(self):
 		return self.name.split('.', 1)[0]
 
+	# Special use of the Fantasy_Player class -- only to make it convenient to find the biggest mistake across the league
 	def get_mistake_second(self):
 		return self.name.split('.', 1)[1]
 
@@ -63,24 +76,23 @@ class Fantasy_Service:
 		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes = [], [], [], [], [], [], [], []
 		self.week = 9
 
-		# Iterating over matchups
+		# Process matchups
 		for matchup in self.league.box_scores(week=self.week):
-			# Calculate the difference between home and away scores
 			home = matchup.home_team
 			away = matchup.away_team
 
 			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score, home.owners[0], away.team_name, away.owners[0]['firstName'])
 			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score, away.owners[0], home.team_name, home.owners[0]['firstName'])
 		
-		self.sheets = Google_Sheet_Service()
+		self.sheets = Google_Sheet_Service(self.scores)
+
+		# We want to do things in the order of teams from the spreadsheet, not the order from ESPN 
 		self.teams = self.sheets.teams
-
-		self.sheets.update_team_names(True, self.scores)
-
+		
 	# Process team performances to be iterable
 	def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner):
 		lost_in_the_sauce = True
-		award_list, aw_list = [], []
+		# Calculate the difference between home and away scores
 		diff = score - opp_score
 
 		# +++ AWARD teams who didn't make it to 100 points
@@ -88,11 +100,13 @@ class Fantasy_Service:
 			self.award(team_name, f'SUB-100 CLUB ({score})', 'SUB_100')
 		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['WR'], ['TE']]:
 			start_sit = self.compute_start_sit(lineup, pos, pos, team_name, diff)
-			if start_sit != '':
+			if start_sit is not None:
+				# +++ AWARD team if a benched player outperformed a starter at the same position (Non-FLEX)
 				self.award(team_name, start_sit[0], 'IND_LOW', start_sit[1])
 
 		start_sit = self.compute_start_sit(lineup, ['WR', 'TE'], ['WR/TE'], team_name, diff)
-		if start_sit != '':
+		if start_sit is not None:
+			# +++ AWARD team if a benched player outperformed a starter at the same position (FLEX)
 			self.award(team_name, start_sit[0], 'IND_LOW', start_sit[1])
 
 		bench_total = 0
@@ -100,22 +114,29 @@ class Fantasy_Service:
 		for player in lineup:
 			# Make pile of all players to iterate over 	
 			new_player = Fantasy_Player(player.name, team_name, player.points)
+
+			# +++ AWARD players who scored over 50
 			if player.points >= 50:
 				self.award(team_name, f'50 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH', player.points * 1000)
+			# +++ AWARD players who scored over 40
 			elif player.points >= 40:
 				self.award(team_name, f'40 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH', player.points * 1000)
-			if player.lineupSlot == 'BE' or player.lineupSlot == 'IR':
+			
+			if player.lineupSlot in BENCHED:
 				bench_total += player.points
-			if diff < 0 and player.lineupSlot not in ['BE', 'IR']:
-				if player.injuryStatus not in ['ACTIVE', 'NORMAL']:
+			
+			if diff < 0 and player.lineupSlot not in BENCHED:
+				# +++ AWARD players who were injured in-game
+				if player.injuryStatus not in HEALTHY:
 					self.award(team_name, f'INJURY TO INSULT - ({player.name}, {player.points})', 'INJURY')
+			
 			if player.lineupSlot not in ['K', 'BE', 'D/ST', 'IR']:
 				# If any players scored 3+ more than projected, the team is not lost in the sauce
 				if player.points >= player.projected_points + 3:
 					lost_in_the_sauce = False
 
 				# +++ AWARD players who scored 2x projected
-				if player.points > 0 and player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points >= 2 * player.projected_points:
+				if player.points > 0 and player.injuryStatus in HEALTHY and player.points >= 2 * player.projected_points:
 					self.award(team_name, f'DAILY DOUBLE - {player.name} scored >2x projected ({player.points}, {player.projected_points} projected)', player.lineupSlot + '_HIGH', player.points)
 
 				# +++ AWARD players who didn't get hurt but scored nothing
@@ -138,7 +159,7 @@ class Fantasy_Service:
 				case 'K':
 					self.ks.append(new_player)
 					# +++ AWARD kickers who somehow didn't score any points
-					if player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points == 0:
+					if player.injuryStatus in HEALTHY and player.points == 0:
 						self.award(team_name, f'GO KICK ROCKS - Kicker scored 0', 'K_LOW')
 				case 'RB':
 					self.rbs.append(new_player)
@@ -271,8 +292,10 @@ class Fantasy_Service:
 		for row in values:
 			if i % 2 == 0:
 				if len(row) > 0 and len(row[3]) == 2 and int(row[3][1]) > 2:
+					# +++ AWARD teams who fell 3+ spots in the rankings
 					if '▼' in row[3]:
 						self.award(row[1].split('\n', 1)[0], 'FREE FALLIN\' - Dropped 3 spots in the rankings', 'FREE_FALL')
+					# +++ AWARD teams who rose 3+ spots in the rankings
 					else:
 						self.award(row[1].split('\n', 1)[0], 'TO THE MOON! - Rose 3 spots in the rankings', 'TO_MOON')
 			i += 1
@@ -283,13 +306,11 @@ class Fantasy_Service:
 
 		# Make a dictionary of team_name -> sum of scores from starters
 		for team in self.league.teams:
-			total = 0
 			winner = max([player for player in players if player.team_name == team.team_name], key=attrgetter('score'))
 			filtered_dict[team.team_name] = winner
 			if grouped_stat:
 				# Add up the scores of like positions
-				total = sum(player.score for player in players if player.team_name == team.team_name)
-				filtered_dict[team.team_name] = Fantasy_Player(winner.name, winner.team_name, total)
+				filtered_dict[team.team_name] = Fantasy_Player(winner.name, winner.team_name, sum(player.score for player in players if player.team_name == team.team_name))
 		
 		# Return player(s) with highest score
 		return max(filtered_dict.values(), key=attrgetter('score'))
@@ -299,7 +320,7 @@ class Fantasy_Service:
 		roster = lineup.copy()
 		total_potential = 0
 
-		# Add individual contributors that don't need to be removed
+		# Add individual contributors to highest potential and remove them from the pool
 		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['RB'], ['TE'], ['WR'], ['WR'], ['WR', 'TE', 'WR/TE']]:
 			best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
 			total_potential += best_player.points
@@ -307,23 +328,22 @@ class Fantasy_Service:
 
 		return round(total_potential, 2)
 
-	# Compare starter's score at a given position to the top scorer at that position on the team and award if benched player scored significantly higher
+	# Compare starter's score at a given position to the top scorer at that position on the team and award if benched player outperformed starter
 	def compute_start_sit(self, roster, pos, lineup_slot, team_name, diff):
 		starters = [player for player in roster if player.lineupSlot in lineup_slot]
-		benched_players = [player for player in roster if player.lineupSlot in ['BE', 'IR'] and player.position in pos]
-		award = ''
+		benched_players = [player for player in roster if player.lineupSlot in BENCHED and player.position in pos]
 		play = max(benched_players, key=attrgetter('points')) if len(benched_players) > 0 else None
 		starter = min(starters, key=attrgetter('points'))
 
-		if play != None:
-			if diff < 0 and play.points >= abs(diff) + starter.points:
-				award = (f'BLUNDER - Starting {play.name} ({play.points}) over {starter.name} ({starter.points}) would have been enough to win (lost by {round(abs(diff), 2)})', (play.points - starter.points) * 10)
-			elif diff < 0 and starter.injuryStatus in ['ACTIVE', 'NORMAL'] and play.points >= starter.points * 2 and play.points >= starter.points + 5:
-				award = (f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {play.name} ({play.points})', play.points - starter.points)
-			if play.points > starter.points:
-				self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
-		return award
-
+		if play is not None and diff < 0:
+			self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
+			# +++ AWARD teams for starting the wrong player by a margin =< the amount they lost by
+			if play.points >= abs(diff) + starter.points:
+				return (f'BLUNDER - Starting {play.name} ({play.points}) over {starter.name} ({starter.points}) would have been enough to win (lost by {round(abs(diff), 2)})', (play.points - starter.points) * 10)
+			# +++ AWARD teams for starting the wrong player by a significant amount
+			elif starter.injuryStatus in HEALTHY and play.points >= starter.points * 2 and play.points >= starter.points + 5:
+				return (f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {play.name} ({play.points})', play.points - starter.points)
+				
 service = Fantasy_Service()
 service.generate_awards()
 
@@ -340,6 +360,7 @@ service.generate_awards()
 # 0) tues morning: change week number to current week 
 # 1) tues morning: run generate awards, copy to keep 
 # 2) tues morning: run update_weekly_column, update_weekly_scores, update_wins
-# 3) thursday morning: run get_weekly_roster_rankings, get_ros_roster_rankings
-# 4) thursday morning: run do_sheet_awards via generate_awards, update_comments
-# 5) thursday morning: run update_previous_week
+
+# 3) wednesday morning: run get_weekly_roster_rankings, get_ros_roster_rankings
+# 4) wednesday morning: run do_sheet_awards via generate_awards, update_comments
+# 5) wednesday morning: run update_previous_week
