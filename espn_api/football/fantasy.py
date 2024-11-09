@@ -1,15 +1,8 @@
 from espn_api.football import League
 
-
-
 from operator import attrgetter
 from collections import defaultdict
 from espn_api.football import Google_Sheet_Service
-
-import google.auth
-from googleapiclient.errors import HttpError
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.errors import HttpError
 import requests
 
 TREND_RANGE = 'A3:J25'
