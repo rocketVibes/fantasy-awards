@@ -1,34 +1,18 @@
-import google.auth
 from espn_api.football import League
+
+
+
 from operator import attrgetter
 from collections import defaultdict
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-import os.path
+from espn_api.football import Google_Sheet_Service
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+import google.auth
+from googleapiclient.errors import HttpError
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import requests
-import json
-
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-
-MAGIC_ASCII_OFFSET = 66
 
 TREND_RANGE = 'A3:J25'
-COMMENTS_RANGE_OUTPUT = 'COMMENTS!B1:B12' 
-POINTS_LETTER_OUTPUT = 'POINTS!B1'
-WINS_RANGE_OUTPUT = 'POINTS!C18:C29'
-WEEKLY_RANKINGS_RANGE_OUTPUT = 'POINTS!Q18:Q29'
-ROS_RANKINGS_RANGE_OUTPUT = 'POINTS!P18:P29'
-TEAM_NAMES_RANGE, TEAM_NAMES_RANGE_OUTPUT = 'TEAMS!B3:B14', 'TEAMS!B3:B14'
-OWNER_NAMES_RANGE = 'TEAMS!C3:C14'
-HISTORY_RANKINGS_RANGE = 'TEAMS!D3:D14'
-WINS_RANGE = 'POINTS!B18:C29'
 
 # Flatten list of team scores as they come in box_score format
 class Fantasy_Team_Performance:
@@ -73,71 +57,38 @@ class Fantasy_Player:
 		return self.name.split('.', 1)[1]
 
 class Fantasy_Award:
-	def __init__(self, award_string, team_name, award_type, magnitude=None):
+	def __init__(self, award_string, team_name, magnitude=None):
 		self.award_string = award_string
 		self.team_name = team_name
-		self.award_type = award_type
 		self.magnitude = magnitude
 
 class Fantasy_Service:
 	def __init__(self):
 		# Hardcode league ID and year
 		self.league = League(306883, 2024)
-		self.awards = []
+		self.awards = defaultdict(dict)
 		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes = [], [], [], [], [], [], [], []
 		self.week = 9
-
-		if os.path.exists('spreadsheet_id.json'):
-			with open('spreadsheet_id.json') as f:
-				self.SPREADSHEET_ID = json.load(f)['id']
-
-		creds = None
-		if os.path.exists("token.json"):
-			creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-			# If there are no (valid) credentials available, let the user log in.
-			if not creds or not creds.valid:
-				if creds and creds.expired and creds.refresh_token:
-					creds.refresh(Request())
-				else:
-					flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-					creds = flow.run_local_server(port=0)
-					# Save the credentials for the next run
-				with open("token.json", "w") as token:
-					token.write(creds.to_json())
-
-		self.service = build("sheets", "v4", credentials=creds)
-		# Call the Sheets API
-		self.sheet = self.service.spreadsheets()
 
 		# Iterating over matchups
 		for matchup in self.league.box_scores(week=self.week):
 			# Calculate the difference between home and away scores
-			diff = max([matchup.home_score, matchup.away_score]) - min([matchup.home_score, matchup.away_score])
-
-			# Winning team gets a positive diff, losing team gets a negative diff
-			if matchup.home_score < matchup.away_score:
-				diff = 0-diff
 			home = matchup.home_team
 			away = matchup.away_team
 
-			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, home.owners[0], diff, away.team_name, away.owners[0]['firstName'])
-			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, away.owners[0], (0-diff), home.team_name, home.owners[0]['firstName'])
+			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score, home.owners[0], away.team_name, away.owners[0]['firstName'])
+			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score, away.owners[0], home.team_name, home.owners[0]['firstName'])
 		
-		try:
-			result = (self.sheet.values()
-				.get(spreadsheetId=self.SPREADSHEET_ID, range=TEAM_NAMES_RANGE_OUTPUT).execute())
-			self.teams = result.get("values", [])
-			if not self.teams:
-				print("No data found in initial teams sheet call")
-		except HttpError as error:
-			print(f"An error occurred: {error}")
+		self.sheets = Google_Sheet_Service()
+		self.teams = self.sheets.teams
 
-		self.update_team_names(True)
+		self.sheets.update_team_names(True, self.scores)
 
 	# Process team performances to be iterable
-	def process_matchup(self, lineup, team_name, score, owner_name, diff, vs_team_name, vs_owner):
+	def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner):
 		lost_in_the_sauce = True
 		award_list, aw_list = [], []
+		diff = score - opp_score
 
 		# +++ AWARD teams who didn't make it to 100 points
 		if score < 100:
@@ -157,7 +108,7 @@ class Fantasy_Service:
 			# Make pile of all players to iterate over 	
 			new_player = Fantasy_Player(player.name, team_name, player.points)
 			if player.points >= 40:
-				self.award(team_name, f'40 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH')
+				self.award(team_name, f'40 BURGER ({player.name}, {player.points})', player.lineupSlot + '_HIGH', player.points * 1000)
 			if player.lineupSlot == 'BE' or player.lineupSlot == 'IR':
 				bench_total += player.points
 			if diff < 0 and player.lineupSlot not in ['BE', 'IR']:
@@ -255,19 +206,19 @@ class Fantasy_Service:
 		# Individual player awards
 		# +++ AWARD QB high
 		qb_high = self.compute_top_scorer(self.qbs)
-		self.award(qb_high.team_name, f'PLAY CALLER BALLER - QB high ({qb_high.get_last_name()}, {qb_high.score})', 'QB_HIGH')
+		self.award(qb_high.team_name, f'PLAY CALLER BALLER - QB high ({qb_high.get_last_name()}, {qb_high.score})', 'QB_HIGH', qb_high.score * 10)
 
 		# +++ AWARD TE high
 		te_high = self.compute_top_scorer(self.tes)
-		self.award(te_high.team_name, f'TIGHTEST END - TE high ({te_high.get_last_name()}, {te_high.score})', 'TE_HIGH')
+		self.award(te_high.team_name, f'TIGHTEST END - TE high ({te_high.get_last_name()}, {te_high.score})', 'TE_HIGH', te_high.score * 10)
 
 		# +++ AWARD D/ST high
 		d_st_high = self.compute_top_scorer(self.dsts)
-		self.award(d_st_high.team_name, f'FORT KNOX - D/ST high ({d_st_high.name}, {d_st_high.score})', 'D_ST_HIGH')
+		self.award(d_st_high.team_name, f'FORT KNOX - D/ST high ({d_st_high.name}, {d_st_high.score})', 'D_ST_HIGH', d_st_high.score * 10)
 
 		# +++ AWARD Compute K high
 		k_high = self.compute_top_scorer(self.ks)
-		self.award(k_high.team_name, f'KICK FAST, EAT ASS - Kicker high ({k_high.get_last_name()}, {k_high.score})', 'K_HIGH')
+		self.award(k_high.team_name, f'KICK FAST, EAT ASS - Kicker high ({k_high.get_last_name()}, {k_high.score})', 'K_HIGH', k_high.score * 10)
 
 		# +++ AWARD individual RB high
 		rb_high = self.compute_top_scorer(self.rbs)
@@ -299,284 +250,37 @@ class Fantasy_Service:
 		i = 1
 		for team_name in self.teams:
 			print(f'{i}) {team_name[0]}')
-			awards = [x for x in self.awards if x.team_name == team_name[0]]
-			num = len(awards)
+			awards = self.awards[team_name[0]].values()
 			for award in awards:
-				if num <= 4 or award.award_string != 'LOST IN THE SAUCE - No non-special-teams starter scored 3+ more than projected':
+				if len(awards) <= 4 or award.award_string != 'LOST IN THE SAUCE - No non-special-teams starter scored 3+ more than projected':
 					print(award.award_string)
 			i += 1
 			print()
 
-	def contains(self, awards, substring, player_name):
-		for award in awards:
-			if substring in award and player_name in award:
-				return award
-		return None
-
 	# Add awards with proper weighting to global self.awards
 	def award(self, team_name, award_string, award_type, magnitude=0):
-		best = next((award for award in self.awards if award.team_name == team_name and award.award_type == award_type), None)
-		if (best == None):
-			self.awards.append(Fantasy_Award(award_string, team_name, award_type, magnitude))
+		best = self.awards[team_name].get(award_type)
+		if best == None:
+			self.awards[team_name][award_type] = Fantasy_Award(award_string, team_name, magnitude)
 		elif (magnitude > best.magnitude):
-			self.awards.remove(best)
-			self.awards.append(Fantasy_Award(award_string, team_name, award_type, magnitude))
-
-	# UPDATE team names in sheet
-	def update_team_names(self, do_sheets_calls):
-		try:
-			result = (self.sheet.values()
-				.get(spreadsheetId=self.SPREADSHEET_ID, range=OWNER_NAMES_RANGE).execute())
-			owners = result.get("values", [])
-			if not owners:
-				print("No data found in update_team_names sheet call for owners")
-
-			new_team_names = []
-			for row in owners:
-				team_name = next(score for score in self.scores if score.owner == row[0]).team_name
-				new_team_names.append([team_name])
-
-			if do_sheets_calls:
-				try:
-					body = {"values": new_team_names}
-					result = (self.service.spreadsheets()
-    					.values()
-        					.update(
-        						spreadsheetId=self.SPREADSHEET_ID,
-        						range=TEAM_NAMES_RANGE_OUTPUT,
-        						valueInputOption='USER_ENTERED',
-        						body=body).execute())
-					print(f"{result.get('updatedCells')} cells updated.")
-				except HttpError as err:
-					print(f"An error occurred: {err}")
-			else:
-				print('No update sheets calls have been authorized: update_team_names')
-
-		except HttpError as error:
-			print(f"An error occurred: {error}")
-
-	# GET previous weeks rankings and UPDATE them in HISTORY of sheet
-	def update_previous_week(self, do_sheets_calls):
-		column = chr(self.week + 1 + MAGIC_ASCII_OFFSET)
-		PREVIOUS_RANKINGS_RANGE_OUTPUT = 'HISTORY!' + column + '2:' + column + '13'
-		
-		try:
-			result = (self.sheet.values().get(spreadsheetId=self.SPREADSHEET_ID, range=HISTORY_RANKINGS_RANGE).execute())
-			rankings = result.get("values", [])
-
-			if not rankings:
-				print("No data found.")
-				return
-			rankings_list = []
-			for rank in rankings:
-				rankings_list.append([rank[0]])
-
-			if do_sheets_calls:
-				try:
-					body = {"values": rankings_list}
-					result = (self.service.spreadsheets()
-    					.values()
-        				.update(
-        					spreadsheetId=self.SPREADSHEET_ID,
-        					range=PREVIOUS_RANKINGS_RANGE_OUTPUT,
-        					valueInputOption='USER_ENTERED',
-        					body=body).execute())
-					print(f"{result.get('updatedCells')} cells updated.")
-				except HttpError as err:
-					print(f"An error occurred: {err}")
-			else:
-				print('No update sheets calls have been authorized: update_weekly_column')
-		except HttpError as error:
-			print(f"An error occurred: {error}")
-		
-	# UPDATE new column letter in sheet
-	def update_weekly_column(self, do_sheets_calls):
-		character = self.week + MAGIC_ASCII_OFFSET
-
-		if do_sheets_calls:
-			try:
-				body = {"values": [[chr(character)]]}
-				result = (self.service.spreadsheets()
-    				.values()
-        			.update(
-        				spreadsheetId=self.SPREADSHEET_ID,
-        				range=POINTS_LETTER_OUTPUT,
-        				valueInputOption='USER_ENTERED',
-        				body=body).execute())
-				print(f"{result.get('updatedCells')} cells updated.")
-			except HttpError as err:
-				print(f"An error occurred: {err}")
-		else:
-			print('No update sheets calls have been authorized: update_weekly_column')
-
-	# UPDATE weekly scores in new column for each team in sheet
-	def update_weekly_scores(self, do_sheets_calls):
-		column = chr(self.week + MAGIC_ASCII_OFFSET)
-		POINTS_RANGE_OUTPUT = 'POINTS!' + column + '3:' + column + '14'
-		
-		score_list = []
-		for row in self.teams:
-			team_score = next(score for score in self.scores if score.team_name == row[0]).score
-			score_list.append([team_score])
-			
-		if do_sheets_calls:
-			try:
-				body = {"values": score_list}
-				result = (self.service.spreadsheets()
-    				.values()
-        			.update(
-        				spreadsheetId=self.SPREADSHEET_ID,
-        				range=POINTS_RANGE_OUTPUT,
-        				valueInputOption='USER_ENTERED',
-        				body=body).execute())
-				print(f"{result.get('updatedCells')} cells updated.")
-			except HttpError as errorr:
-				print(f"An error occurred: {errorr}")
-		else:
-			print('No update sheets calls have been authorized: update_weekly_scores')
-	
-	# GET team order of win total and UPDATE win total for winning teams in sheet
-	def update_wins(self, do_sheets_calls):
-		try:
-			result = (self.sheet.values()
-				.get(spreadsheetId=self.SPREADSHEET_ID, range=WINS_RANGE).execute())
-			wins = result.get("values", [])
-			if not wins:
-				print("No data found in initial teams sheet call")
-
-			new_wins = []
-			for row in wins:
-				if next(score for score in self.scores if score.team_name == row[0]).diff > 0:
-					new_wins.append([int(row[1]) + 1])
-				else:
-					new_wins.append([int(row[1])])
-
-			if do_sheets_calls:
-				try:
-					body = {"values": new_wins}
-					result = (self.service.spreadsheets()
-    					.values()
-        				.update(
-        					spreadsheetId=self.SPREADSHEET_ID,
-        					range=WINS_RANGE_OUTPUT,
-        					valueInputOption='USER_ENTERED',
-        					body=body).execute())
-					print(f"{result.get('updatedCells')} cells updated.")
-				except HttpError as errorr:
-					print(f"An error occurred: {errorr}")
-			else:
-				print('No update sheets calls have been authorized: update_wins')
-		except HttpError as error:
-			print(f"An error occurred: {error}")
+			self.awards[team_name][award_type] = Fantasy_Award(award_string, team_name, magnitude)
 
 	# GET trends for each team generated by sheet for ranking-trend-based awards
-	def do_sheet_awards(self):	
-		try:
-			result = (self.sheet.values()
-				.get(spreadsheetId=self.SPREADSHEET_ID, range=TREND_RANGE).execute())
-			values = result.get("values", [])
-
-			if not values:
-				print("No data found.")
-				return
-			i = 0
-			for row in values:
-				if i % 2 == 0:
-					if len(row) > 0 and len(row[3]) == 2 and int(row[3][1]) > 2:
-						if '▼' in row[3]:
-							self.award(row[1].split('\n', 1)[0], 'FREE FALLIN\' - Dropped 3 spots in the rankings', 'FREE_FALL')
-						else:
-							self.award(row[1].split('\n', 1)[0], 'TO THE MOON! - Rose 3 spots in the rankings', 'TO_MOON')
-				i += 1
-				
-		except HttpError as err:
-			print(err)
-
-	# GET weekly roster ranking scores from FantasyPros and UPDATE weekly roster ranking scores in sheet 
-	def get_weekly_roster_rankings(self, do_sheets_calls):
-		r = requests.get('https://mpbnfl.fantasypros.com/api/getLeagueAnalysisJSON?key=nfl~021c6923-33f0-4763-a84a-6327f62fded2&period=week')
-		data = r.json()
+	def do_sheet_awards(self):
+		values = self.sheets.get_sheet_values(TREND_RANGE)
+		if not values:
+			print("No data found.")
+			return
 		
-		rankings_list = []
-		# for team in data['standings']:
-		for row in self.teams:
-			for team in data['standings']:
-				if row[0] == team['teamName']:
-					num = round(float(team['percentAsNumber']) * 100)
-					rankings_list.append([num])
-
-		if do_sheets_calls:
-			try:
-				body = {"values": rankings_list}
-				result = (self.service.spreadsheets()
-    				.values()
-        			.update(
-        				spreadsheetId=self.SPREADSHEET_ID,
-        				range=WEEKLY_RANKINGS_RANGE_OUTPUT,
-        				valueInputOption='USER_ENTERED',
-        				body=body).execute())
-				print(f"{result.get('updatedCells')} cells updated.")
-
-			except HttpError as err:
-				print(f"An error occurred: {err}")
-		else:
-			print('No update sheets calls have been authorized: get_weekly_roster_rankings')
-
-	# GET RoS roster ranking scores from FantasyPros and UPDATE RoS roster rankings scores in sheet
-	def get_ros_roster_rankings(self, do_sheets_calls):
-		r = requests.get('https://mpbnfl.fantasypros.com/api/getLeagueAnalysisJSON?key=nfl~021c6923-33f0-4763-a84a-6327f62fded2&period=ros')
-		data = r.json()
-
-		rankings_list = []
-		# for team in data['standings']:
-		for row in self.teams:
-			for team in data['standings']:
-				if row[0] == team['teamName']:
-					num = round(float(team['percentAsNumber']) * 100)
-					rankings_list.append([num])
-
-		if do_sheets_calls:
-			try:
-				body = {"values": rankings_list}
-				result = (self.service.spreadsheets()
-    				.values()
-        			.update(
-        				spreadsheetId=self.SPREADSHEET_ID,
-        				range=ROS_RANKINGS_RANGE_OUTPUT,
-        				valueInputOption='USER_ENTERED',
-        				body=body).execute())
-				print(f"{result.get('updatedCells')} cells updated.")
-
-			except HttpError as err:
-				print(f"An error occurred: {err}")
-		else:
-			print('No update sheets calls have been authorized: get_weekly_roster_rankings')
-
-	# UPDATE comment values in sheet
-	def update_comments(self, do_sheets_calls):
-		award_list = []
-		for row in self.teams:
-			award_string = ''
-			ctr = len(self.awards[row[0]])
-			for award in self.awards[row[0]]:
-				ctr_string = '\n' if ctr - 1 > 0 else ''
-				award_string += award + ctr_string
-			award_list.append([award_string])
-		if do_sheets_calls:	
-			try:
-				body = {"values": award_list}
-				result = (self.service.spreadsheets()
-    				.values()
-        			.update(
-        				spreadsheetId=self.SPREADSHEET_ID,
-        				range=COMMENTS_RANGE_OUTPUT,
-        				valueInputOption='USER_ENTERED',
-        				body=body).execute())
-				print(f"{result.get('updatedCells')} cells updated.")
-			except HttpError as error:
-				print(f"An error occurred: {error}")
-		else:
-			print('No update sheets calls have been authorized: update_comments')
+		i = 0
+		for row in values:
+			if i % 2 == 0:
+				if len(row) > 0 and len(row[3]) == 2 and int(row[3][1]) > 2:
+					if '▼' in row[3]:
+						self.award(row[1].split('\n', 1)[0], 'FREE FALLIN\' - Dropped 3 spots in the rankings', 'FREE_FALL')
+					else:
+						self.award(row[1].split('\n', 1)[0], 'TO THE MOON! - Rose 3 spots in the rankings', 'TO_MOON')
+			i += 1
 
 	# Compute highest scorer for given list of players
 	def compute_top_scorer(self, players, grouped_stat=False):
@@ -602,9 +306,9 @@ class Fantasy_Service:
 
 		# Add individual contributors that don't need to be removed
 		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['RB'], ['TE'], ['WR'], ['WR'], ['WR', 'TE', 'WR/TE']]:
-			new_total = max([player for player in roster if player.position in pos], key=attrgetter('points'))
-			total_potential += new_total.points
-			roster.remove(new_total)
+			best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
+			total_potential += best_player.points
+			roster.remove(best_player)
 
 		return round(total_potential, 2)
 
@@ -624,20 +328,23 @@ class Fantasy_Service:
 			if play.points > starter.points:
 				self.mistakes.append(Fantasy_Player(play.name + '.' + starter.name, team_name, play.points, starter.points))
 		return award
-		
+# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
+# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
+# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
+# _____________________________________________________________________________________________________________________________________________________________________________________________________________________
+
 service = Fantasy_Service()
 service.generate_awards()
 
-# service.update_weekly_column(True)
-# service.update_weekly_scores(True)
-# service.update_wins(True)
+# sheets.update_weekly_column(True)
+# sheets.update_weekly_scores(True)
+# sheets.update_wins(True)
 
-# service.get_weekly_roster_rankings(True)
-# service.get_ros_roster_rankings(True)
-# service.generate_awards()
-# service.update_comments(True)
+# sheets.get_weekly_roster_rankings(True)
+# sheets.get_ros_roster_rankings(True)
+# sheets.update_comments(True)
 
-# service.update_previous_week(True)
+# sheets.update_previous_week(True)
 
 # 0) tues morning: change week number to current week 
 # 1) tues morning: run generate awards, copy to keep 
