@@ -23,8 +23,8 @@ HISTORY_RANKINGS_RANGE = 'TEAMS!D3:D14'
 WINS_RANGE = 'POINTS!B18:C29'
 
 class Google_Sheet_Service:
-	def __init__(self):
-
+	def __init__(self, scores):
+		self.scores = scores
 		if os.path.exists('spreadsheet_id.json'):
 			with open('spreadsheet_id.json') as f:
 				self.SPREADSHEET_ID = json.load(f)['id']
@@ -47,9 +47,21 @@ class Google_Sheet_Service:
 		# Call the Sheets API
 		self.sheet = self.service.spreadsheets()
 
-		self.teams = self.get_sheet_values(TEAM_NAMES_RANGE_OUTPUT)
+		# GET current owners and team names
+		owners = self.get_sheet_values(OWNER_NAMES_RANGE)
+		if not owners:
+			print("No data found in update_team_names sheet call for owners")
 
-		# self.update_team_names(True)
+		# Match up current owners with most recent team names from ESPN
+		new_team_names = []
+		for row in owners:
+			team_name = next(score for score in scores if score.owner == row[0]).team_name
+			new_team_names.append([team_name])
+
+		# UPDATE team names in sheet
+		self.update_sheet_values(TEAM_NAMES_RANGE_OUTPUT, new_team_names)
+
+		self.teams = self.get_sheet_values(TEAM_NAMES_RANGE_OUTPUT)
 
 	# GET values from Google Sheet from given range
 	def get_sheet_values(self, range_input):
@@ -83,22 +95,6 @@ class Google_Sheet_Service:
 
 		except HttpError as err:
 			print(f"An error occurred: {err}")
-
-	# UPDATE team names in sheet
-	def update_team_names(self, do_sheets_calls, scores):
-		owners = self.get_sheet_values(OWNER_NAMES_RANGE)
-		if not owners:
-			print("No data found in update_team_names sheet call for owners")
-
-		new_team_names = []
-		for row in owners:
-			team_name = next(score for score in scores if score.owner == row[0]).team_name
-			new_team_names.append([team_name])
-
-		if do_sheets_calls:
-			self.update_sheet_values(TEAM_NAMES_RANGE_OUTPUT, new_team_names)
-		else:
-			print('No update sheets calls have been authorized: update_team_names')
 
 	# GET previous weeks rankings and UPDATE them in HISTORY of sheet
 	def update_previous_week(self, do_sheets_calls):
