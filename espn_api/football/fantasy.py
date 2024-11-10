@@ -1,8 +1,9 @@
 from espn_api.football import League
+from espn_api.football import Google_Sheet_Service
 
 from operator import attrgetter
 from collections import defaultdict
-from espn_api.football import Google_Sheet_Service
+
 import requests
 
 TREND_RANGE = 'A3:J25'
@@ -20,10 +21,18 @@ class Fantasy_Team_Performance:
 		self.vs_owner = vs_owner
 		self.lineup = lineup
 		self.bench_total = bench_total
+		# Compute a team's potential highest score given perfect start/sit decisions
+		roster = lineup.copy()
+		total_potential = 0
 
-	def set_potential(self, potential_high):
-		self.potential_high = potential_high
-		self.potential_used = self.score / potential_high
+		# Add individual contributors to highest potential and remove them from the pool
+		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['RB'], ['TE'], ['WR'], ['WR'], ['WR', 'TE']]:
+			best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
+			total_potential += best_player.points
+			roster.remove(best_player)
+
+		self.potential_high = round(total_potential, 2)
+		self.potential_used = self.score / total_potential
 
 	def get_first_name(self):
 		if 'Aaron' in self.owner:
@@ -73,7 +82,7 @@ class Fantasy_Service:
 		# Hardcode league ID and year
 		self.league = League(306883, 2024)
 		self.awards = defaultdict(dict)
-		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes = [], [], [], [], [], [], [], []
+		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes, self.crashes, self.rookies = [], [], [], [], [], [], [], [], [], []
 		self.week = 9
 
 		# Process matchups
@@ -98,6 +107,10 @@ class Fantasy_Service:
 		# +++ AWARD teams who didn't make it to 100 points
 		if score < 100:
 			self.award(team_name, f'SUB-100 CLUB ({score})', 'SUB_100')
+		# +++ AWARD teams who beat their opponent by 100
+		if diff >= 100:
+			self.award(team_name, f'MADDEN ROOKIE MODE (beat {vs_owner} by {diff})')
+
 		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['WR'], ['TE']]:
 			start_sit = self.compute_start_sit(lineup, pos, pos, team_name, diff)
 			if start_sit is not None:
@@ -110,10 +123,22 @@ class Fantasy_Service:
 			self.award(team_name, start_sit[0], 'IND_LOW', start_sit[1])
 
 		bench_total = 0
-
+		lowest_ind = 50
 		for player in lineup:
+			tds = 0
+			if player.stats.get(self.week) != None and player.stats[self.week].get('breakdown') != None:
+				tds += float(player.stats[self.week]['breakdown']['passingTouchdowns']) if player.stats[self.week]['breakdown'].get('passingTouchdowns') != None else 0
+				tds += float(player.stats[self.week]['breakdown']['rushingTouchdowns']) if player.stats[self.week]['breakdown'].get('rushingTouchdowns') != None else 0
+				tds += float(player.stats[self.week]['breakdown']['receivingTouchdowns']) if player.stats[self.week]['breakdown'].get('receivingTouchdowns') != None else 0
 			# Make pile of all players to iterate over 	
-			new_player = Fantasy_Player(player.name, team_name, player.points)
+			new_player = Fantasy_Player(player.name, team_name, player.points, tds)
+		
+			if player.lineupSlot not in BENCHED and 'Rookie' in player.eligibleSlots:
+				self.rookies.append(new_player)
+
+			if player.injuryStatus in HEALTHY and player.lineupSlot not in BENCHED and player.points < lowest_ind:
+				lowest_ind = player.points
+				lowest_ind_player = new_player
 
 			# +++ AWARD players who scored over 50
 			if player.points >= 50:
@@ -147,13 +172,6 @@ class Fantasy_Service:
 			match player.lineupSlot:
 				case 'QB':
 					self.qbs.append(new_player)
-					ints = 0 if player.stats[self.week]['breakdown'].get('passingInterceptions') == None else player.stats[self.week]['breakdown']['passingInterceptions']
-					tds = 0 if player.stats[self.week]['breakdown'].get('passingTouchdowns') == None else player.stats[self.week]['breakdown']['passingTouchdowns']
-				
-					# +++ AWARD if any starting QBs had equal num of TDs and INTs
-					if ints != 0 and tds == ints:
-						plural = 's' if tds > 1 else ''
-						self.award(team_name, f'PERFECTLY BALANCED - {player.name} threw {int(tds)} TD{plural} and {int(ints)} INT{plural}', 'QB_MID')
 				case 'TE':
 					self.tes.append(new_player)
 				case 'K':
@@ -175,7 +193,7 @@ class Fantasy_Service:
 		
 		new_performance = Fantasy_Team_Performance(team_name, owner_name, score, diff, vs_team_name, vs_owner, lineup, bench_total)
 		self.scores.append(new_performance)
-		new_performance.set_potential(self.compute_potential(lineup, team_name, diff))
+		self.crashes.append(lowest_ind_player)
 
 		# +++ AWARD team whose players didn't exceed projected amount by 3+
 		if lost_in_the_sauce: 
@@ -258,8 +276,16 @@ class Fantasy_Service:
 		bench_total_high = max(self.scores, key=attrgetter('bench_total'))
 		self.award(bench_total_high.team_name, f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})', 'BIG_BENCH')
 
+		# +++ AWARD worst start/sit mistake
 		biggest_mistake = max(self.mistakes, key=attrgetter('diff'))
 		self.award(biggest_mistake.team_name, f'BIGGEST MISTAKE - Starting {biggest_mistake.get_mistake_first()} ({biggest_mistake.score}) over {biggest_mistake.get_mistake_second()} ({biggest_mistake.second_score})', 'IND_LOW')
+
+		# +++ AWARD player who scored the least of projected 
+		crash_burn = min(self.crashes, key=attrgetter('score'))
+		self.award(crash_burn.team_name, f'CRASH AND BURN - {crash_burn.name} scored {crash_burn.score} fewest points of all league starters', 'CRASH_BURN')
+
+		rookie_cookie = max(self.rookies, key=attrgetter('score'))
+		self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - ({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
 
 		self.do_sheet_awards()
 
@@ -298,34 +324,33 @@ class Fantasy_Service:
 					else:
 						self.award(row[1].split('\n', 1)[0], 'TO THE MOON! - Rose 3 spots in the rankings', 'TO_MOON')
 			i += 1
+		# charac = chr(65+self.week)
+		# RANKINGS_RANGE = 'HISTORY!' + charac + '2:' + charac + '13'
+		# values_rank = self.sheets.get_sheet_values(RANKINGS_RANGE)
+		# if not values_rank:
+			# print("No data found.")
+			# return
+		# i = 0
+		# for team in self.teams:
+			# rank = int(values_rank[i][0])
+			# if next(score for score in self.scores if score.team_name == team[0]).diff 
+
 
 	# Compute highest scorer for given list of players
 	def compute_top_scorer(self, players, grouped_stat=False):
 		filtered_dict = {}
 
 		# Make a dictionary of team_name -> sum of scores from starters
-		for team in self.league.teams:
-			winner = max([player for player in players if player.team_name == team.team_name], key=attrgetter('score'))
-			filtered_dict[team.team_name] = winner
+		for team in self.teams:
+			team_name = team[0]
+			winner = max([player for player in players if player.team_name == team_name], key=attrgetter('score'))
+			filtered_dict[team_name] = winner
 			if grouped_stat:
 				# Add up the scores of like positions
-				filtered_dict[team.team_name] = Fantasy_Player(winner.name, winner.team_name, sum(player.score for player in players if player.team_name == team.team_name))
+				filtered_dict[team_name] = Fantasy_Player(winner.name, winner.team_name, sum(player.score for player in players if player.team_name == team_name))
 		
 		# Return player(s) with highest score
 		return max(filtered_dict.values(), key=attrgetter('score'))
-
-	# Compute a team's potential highest score given perfect start/sit decisions
-	def compute_potential(self, lineup, team_name, diff):
-		roster = lineup.copy()
-		total_potential = 0
-
-		# Add individual contributors to highest potential and remove them from the pool
-		for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['RB'], ['TE'], ['WR'], ['WR'], ['WR', 'TE', 'WR/TE']]:
-			best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
-			total_potential += best_player.points
-			roster.remove(best_player)
-
-		return round(total_potential, 2)
 
 	# Compare starter's score at a given position to the top scorer at that position on the team and award if benched player outperformed starter
 	def compute_start_sit(self, roster, pos, lineup_slot, team_name, diff):
