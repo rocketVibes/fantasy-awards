@@ -1,8 +1,10 @@
 import os.path
 import json
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -23,8 +25,9 @@ HISTORY_RANKINGS_RANGE = 'TEAMS!D3:D14'
 WINS_RANGE = 'POINTS!B18:C29'
 
 class Google_Sheet_Service:
-	def __init__(self, scores):
+	def __init__(self, scores, week):
 		self.scores = scores
+		self.week = week
 		if os.path.exists('spreadsheet_id.json'):
 			with open('spreadsheet_id.json') as f:
 				self.SPREADSHEET_ID = json.load(f)['id']
@@ -125,13 +128,13 @@ class Google_Sheet_Service:
 			print('No update sheets calls have been authorized: update_weekly_column')
 
 	# UPDATE weekly scores in new column for each team in sheet
-	def update_weekly_scores(self, do_sheets_calls, scores):
+	def update_weekly_scores(self, do_sheets_calls):
 		column = chr(self.week + MAGIC_ASCII_OFFSET)
 		POINTS_RANGE_OUTPUT = 'POINTS!' + column + '3:' + column + '14'
 		
 		score_list = []
 		for row in self.teams:
-			team_score = next(score for score in scores if score.team_name == row[0]).score
+			team_score = next(score for score in self.scores if score.team_name == row[0]).score
 			score_list.append([team_score])
 			
 		if do_sheets_calls:
@@ -140,14 +143,14 @@ class Google_Sheet_Service:
 			print('No update sheets calls have been authorized: update_weekly_scores')
 	
 	# GET team order of win total and UPDATE win total for winning teams in sheet
-	def update_wins(self, do_sheets_calls, scores):
+	def update_wins(self, do_sheets_calls):
 		wins = self.get_sheet_values(WINS_RANGE)
 		if not wins:
 			print("No data found in initial teams sheet call")
 
 		new_wins = []
 		for row in wins:
-			if next(score for score in scores if score.team_name == row[0]).diff > 0:
+			if next(score for score in self.scores if score.team_name == row[0]).diff > 0:
 				new_wins.append([int(row[1]) + 1])
 			else:
 				new_wins.append([int(row[1])])
