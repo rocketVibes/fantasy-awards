@@ -83,7 +83,7 @@ class Fantasy_Service:
 		self.league = League(306883, 2024)
 		self.awards = defaultdict(dict)
 		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes, self.crashes, self.rookies = [], [], [], [], [], [], [], [], [], []
-		self.week = 9
+		self.week = 10
 
 		# Process matchups
 		for matchup in self.league.box_scores(week=self.week):
@@ -93,10 +93,13 @@ class Fantasy_Service:
 			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score, home.owners[0], away.team_name, away.owners[0]['firstName'])
 			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score, away.owners[0], home.team_name, home.owners[0]['firstName'])
 			
-		self.sheets = Google_Sheet_Service(self.scores)
+		self.sheets = Google_Sheet_Service(self.scores, self.week)
 		# We want to do things in the order of teams from the spreadsheet, not the order from ESPN 
 		self.teams = self.sheets.teams
 		self.rankings = self.get_rankings()
+		# self.sheets.update_weekly_column(True)
+		# self.sheets.update_weekly_scores(True)
+		# self.sheets.update_wins(True)
 
 	# Process team performances to be iterable
 	def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner):
@@ -282,7 +285,7 @@ class Fantasy_Service:
 		rookie_cookie = max(self.rookies, key=attrgetter('score'))
 		self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - ({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
 
-		self.do_sheet_awards()
+		# self.do_sheet_awards()
 
 		i = 1
 		for team_name in self.teams:
@@ -302,10 +305,11 @@ class Fantasy_Service:
 			self.awards[team_name][award_type] = Fantasy_Award(award_string, team_name, magnitude)
 
 	def get_rankings(self):
-		charac = chr(67+self.week)
+		charac = chr(66+self.week)
 		RANKINGS_RANGE = 'HISTORY!' + charac + '2:' + charac + '13'
 	
 		values_rank = self.sheets.get_sheet_values(RANKINGS_RANGE)
+
 		if not values_rank:
 			print("No data found.")
 			return
@@ -379,6 +383,7 @@ class Fantasy_Service:
 				return (f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {play.name} ({play.points})', play.points - starter.points)
 				
 service = Fantasy_Service()
+
 service.generate_awards()
 
 # sheets.update_weekly_column(True)
