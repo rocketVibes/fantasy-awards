@@ -54,7 +54,7 @@ class Google_Sheet_Service:
 		# GET current owners and team names
 		owners = self.get_sheet_values(OWNER_NAMES_RANGE)
 		if not owners:
-			print('No data found in update_team_names sheet call for owners')
+			print('No data found in while updating team names.')
 
 		# Match up current owners with most recent team names from ESPN
 		new_team_names = []
@@ -63,6 +63,7 @@ class Google_Sheet_Service:
 			new_team_names.append([team_name])
 
 		# UPDATE team names in sheet
+		print('Updating team names!')
 		self.update_sheet_values(TEAM_NAMES_RANGE_OUTPUT, new_team_names)
 
 		self.teams = self.get_sheet_values(TEAM_NAMES_RANGE_OUTPUT)
@@ -112,6 +113,7 @@ class Google_Sheet_Service:
 			rankings_list.append([rank[0]])
 
 		if do_sheets_calls:
+			print('Updating rankings from last week!')
 			PREVIOUS_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + self.week + 1)
 			PREVIOUS_RANKINGS_RANGE_OUTPUT = 'HISTORY!' + PREVIOUS_RANKINGS_COLUMN + '2:' + PREVIOUS_RANKINGS_COLUMN + '13'
 			self.update_sheet_values(PREVIOUS_RANKINGS_RANGE_OUTPUT, rankings_list)
@@ -121,6 +123,7 @@ class Google_Sheet_Service:
 	# UPDATE new column letter in sheet
 	def update_weekly_column(self, do_sheets_calls):
 		if do_sheets_calls:
+			print('Updating singular letter to represent column!')
 			POINTS_LETTER_COLUMN = chr(MAGIC_ASCII_OFFSET + self.week)
 			self.update_sheet_values(POINTS_LETTER_OUTPUT, [[POINTS_LETTER_COLUMN]])
 		else:
@@ -136,6 +139,7 @@ class Google_Sheet_Service:
 			score_list.append([team_score])
 			
 		if do_sheets_calls:
+			print('Updating this week\'s scores!')
 			self.update_sheet_values(POINTS_RANGE_OUTPUT, score_list)
 		else:
 			print('No update sheets calls have been authorized: update_weekly_scores')
@@ -154,6 +158,7 @@ class Google_Sheet_Service:
 				new_wins.append([int(row[1])])
 
 		if do_sheets_calls:
+			print('Updating the win counts!')
 			self.update_sheet_values(WINS_RANGE_OUTPUT, new_wins)
 		else:
 			print('No update sheets calls have been authorized: update_wins')
@@ -171,6 +176,7 @@ class Google_Sheet_Service:
 					rankings_list.append([num])
 
 		if do_sheets_calls:
+			print('Updating weekly roster rankings from FantasyPros!')
 			self.update_sheet_values(WEEKLY_RANKINGS_RANGE_OUTPUT, rankings_list)
 		else:
 			print('No update sheets calls have been authorized: get_weekly_roster_rankings')
@@ -186,6 +192,7 @@ class Google_Sheet_Service:
 					rankings_list.append([num])
 
 		if do_sheets_calls:
+			print('Updating RoS roster rankings from FantasyPros!')
 			self.update_sheet_values(ROS_RANKINGS_RANGE_OUTPUT, rankings_list)
 		else:
 			print('No update sheets calls have been authorized: get_weekly_roster_rankings')
@@ -203,6 +210,7 @@ class Google_Sheet_Service:
 			award_list.append([award_string])
 
 		if do_sheets_calls:	
+			print('Updating comments!')
 			self.update_sheet_values(COMMENTS_RANGE_OUTPUT, award_list)
 		else:
 			print('No update sheets calls have been authorized: update_comments')
