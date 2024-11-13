@@ -5,6 +5,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from googleapiclient.errors import HttpError
+import requests
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -77,11 +78,11 @@ class Google_Sheet_Service:
 
 	# GET weekly or RoS roster rankings from FantasyPros
 	def get_rankings(self, uri):
-		data = requests.get(uri).json()
+		data = requests.get(uri)
 		if not data.ok:
 			print(f'An error occurred when fetching rankings from FantasyPros {uri}: ' + data.reason)
 		else: 
-			return data
+			return data.json()
 
 	# UPDATE Google Sheet for given range with given values
 	def update_sheet_values(self, range_output, values):
@@ -199,10 +200,10 @@ class Google_Sheet_Service:
 		award_list = []
 		for row in self.teams:
 			award_string = ''
-			ctr = len(self.awards[row[0]].values())
-			for award in self.awards[row[0]].values():
+			ctr = len(awards[row[0]].values())
+			for award in awards[row[0]].values():
 				ctr_string = '\n' if ctr - 1 > 0 else ''
-				award_string += award + ctr_string
+				award_string += award.award_string + ctr_string
 			award_list.append([award_string])
 
 		if do_sheets_calls:	

@@ -4,8 +4,6 @@ from espn_api.football import Google_Sheet_Service
 from operator import attrgetter
 from collections import defaultdict
 
-import requests
-
 TREND_RANGE = 'A3:J25'
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
@@ -101,6 +99,9 @@ class Fantasy_Service:
 		# self.sheets.update_weekly_scores(True)
 		# self.sheets.update_wins(True)
 
+		# self.sheets.get_weekly_roster_rankings(True)
+		# self.sheets.get_ros_roster_rankings(True)
+
 	# Process team performances to be iterable
 	def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner):
 		lost_in_the_sauce = True
@@ -134,7 +135,7 @@ class Fantasy_Service:
 			if player.lineupSlot not in BENCHED and 'Rookie' in player.eligibleSlots:
 				self.rookies.append(new_player)
 
-			if player.injuryStatus in HEALTHY and player.lineupSlot not in BENCHED and player.points < lowest_ind:
+			if player.lineupSlot != 'D/ST' and player.injuryStatus in HEALTHY and player.lineupSlot not in BENCHED and player.points < lowest_ind:
 				lowest_ind = player.points
 				lowest_ind_player = new_player
 
@@ -285,7 +286,7 @@ class Fantasy_Service:
 		rookie_cookie = max(self.rookies, key=attrgetter('score'))
 		self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - ({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
 
-		# self.do_sheet_awards()
+		self.do_sheet_awards()
 
 		i = 1
 		for team_name in self.teams:
@@ -296,6 +297,9 @@ class Fantasy_Service:
 					print(award.award_string)
 			i += 1
 			print()
+
+		# self.sheets.update_comments(True, self.awards)
+		# self.sheets.update_previous_week(True)
 
 	# Add awards with proper weighting to global self.awards
 	def award(self, team_name, award_string, award_type, magnitude=0):
