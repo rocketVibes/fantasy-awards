@@ -54,7 +54,7 @@ class Google_Sheet_Service:
 		# GET current owners and team names
 		owners = self.get_sheet_values(OWNER_NAMES_RANGE)
 		if not owners:
-			print("No data found in update_team_names sheet call for owners")
+			print('No data found in update_team_names sheet call for owners')
 
 		# Match up current owners with most recent team names from ESPN
 		new_team_names = []
@@ -74,10 +74,10 @@ class Google_Sheet_Service:
 				.get(spreadsheetId=self.SPREADSHEET_ID, range=range_input).execute())
 			return result.get("values", [])
 		except HttpError as error:
-			print(f"An error occurred: {error}")
+			print(f'An error occurred: {error}')
 
 	# GET weekly or RoS roster rankings from FantasyPros
-	def get_rankings(self, uri):
+	def get_fantasypros_rankings(self, uri):
 		data = requests.get(uri)
 		if not data.ok:
 			print(f'An error occurred when fetching rankings from FantasyPros {uri}: ' + data.reason)
@@ -95,19 +95,16 @@ class Google_Sheet_Service:
         				range=range_output,
         				valueInputOption='USER_ENTERED',
         				body=body).execute())
-			print(f"{result.get('updatedCells')} cells updated.")
+			print(f'{result.get('updatedCells')} cells updated.')
 
 		except HttpError as err:
-			print(f"An error occurred: {err}")
+			print(f'An error occurred: {err}')
 
 	# GET previous weeks rankings and UPDATE them in HISTORY of sheet
 	def update_previous_week(self, do_sheets_calls):
-		column = chr(self.week + 1 + MAGIC_ASCII_OFFSET)
-		PREVIOUS_RANKINGS_RANGE_OUTPUT = 'HISTORY!' + column + '2:' + column + '13'
 		rankings = self.get_sheet_values(HISTORY_RANKINGS_RANGE)
-
 		if not rankings:
-			print("No data found.")
+			print('No data found.')
 			return
 
 		rankings_list = []
@@ -115,24 +112,24 @@ class Google_Sheet_Service:
 			rankings_list.append([rank[0]])
 
 		if do_sheets_calls:
+			PREVIOUS_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + self.week + 1)
+			PREVIOUS_RANKINGS_RANGE_OUTPUT = 'HISTORY!' + PREVIOUS_RANKINGS_COLUMN + '2:' + PREVIOUS_RANKINGS_COLUMN + '13'
 			self.update_sheet_values(PREVIOUS_RANKINGS_RANGE_OUTPUT, rankings_list)
 		else:
-			print('No update sheets calls have been authorized: update_weekly_column')
+			print('No update sheets calls have been authorized: update_previous_week')
 		
 	# UPDATE new column letter in sheet
 	def update_weekly_column(self, do_sheets_calls):
-		character = self.week + MAGIC_ASCII_OFFSET
-
 		if do_sheets_calls:
-			self.update_sheet_values(POINTS_LETTER_OUTPUT, [[chr(character)]])
+			POINTS_LETTER_COLUMN = chr(MAGIC_ASCII_OFFSET + self.week)
+			self.update_sheet_values(POINTS_LETTER_OUTPUT, [[POINTS_LETTER_COLUMN]])
 		else:
 			print('No update sheets calls have been authorized: update_weekly_column')
 
 	# UPDATE weekly scores in new column for each team in sheet
-	def update_weekly_scores(self, do_sheets_calls):
-		column = chr(self.week + MAGIC_ASCII_OFFSET)
-		POINTS_RANGE_OUTPUT = 'POINTS!' + column + '3:' + column + '14'
-		
+	def update_weekly_scores(self, do_sheets_calls):	
+		POINTS_RANGE_COLUMN = chr(MAGIC_ASCII_OFFSET + self.week)
+		POINTS_RANGE_OUTPUT = 'POINTS!' + POINTS_RANGE_COLUMN + '3:' + POINTS_RANGE_COLUMN + '14'
 		score_list = []
 		for row in self.teams:
 			team_score = next(score for score in self.scores if score.team_name == row[0]).score
@@ -147,7 +144,7 @@ class Google_Sheet_Service:
 	def update_wins(self, do_sheets_calls):
 		wins = self.get_sheet_values(WINS_RANGE)
 		if not wins:
-			print("No data found in initial teams sheet call")
+			print('No data found in initial teams sheet call.')
 
 		new_wins = []
 		for row in wins:
@@ -163,7 +160,7 @@ class Google_Sheet_Service:
 
 	# GET weekly roster ranking scores from FantasyPros and UPDATE weekly roster ranking scores in sheet 
 	def get_weekly_roster_rankings(self, do_sheets_calls):
-		data = self.get_rankings(WEEKLY_RANKING_URI)
+		data = self.get_fantasypros_rankings(WEEKLY_RANKING_URI)
 		
 		rankings_list = []
 		# for team in data['standings']:
@@ -180,10 +177,8 @@ class Google_Sheet_Service:
 
 	# GET RoS roster ranking scores from FantasyPros and UPDATE RoS roster rankings scores in sheet
 	def get_ros_roster_rankings(self, do_sheets_calls):
-		data = self.get_rankings(ROS_RANKING_URI)
-
+		data = self.get_fantasypros_rankings(ROS_RANKING_URI)
 		rankings_list = []
-		# for team in data['standings']:
 		for row in self.teams:
 			for team in data['standings']:
 				if row[0] == team['teamName']:
@@ -200,10 +195,11 @@ class Google_Sheet_Service:
 		award_list = []
 		for row in self.teams:
 			award_string = ''
-			ctr = len(awards[row[0]].values())
+			ctr = len(awards[row[0]].values()) - 1
 			for award in awards[row[0]].values():
-				ctr_string = '\n' if ctr - 1 > 0 else ''
+				ctr_string = '\n' if ctr > 0 else ''
 				award_string += award.award_string + ctr_string
+				ctr -= 1
 			award_list.append([award_string])
 
 		if do_sheets_calls:	
