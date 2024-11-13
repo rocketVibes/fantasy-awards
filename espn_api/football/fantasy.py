@@ -96,8 +96,8 @@ class Fantasy_Service:
 			home_owner = home.owners[0]['firstName'] + ' ' + home.owners[0]['lastName']
 			away_owner = away.owners[0]['firstName'] + ' ' + away.owners[0]['lastName']
 
-			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score, home.owners[0], away.team_name, self.get_first_name(away_owner))
-			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score, away.owners[0], home.team_name, self.get_first_name(home_owner))
+			self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score, home_owner, away.team_name, self.get_first_name(away_owner))
+			self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score, away_owner, home.team_name, self.get_first_name(home_owner))
 			
 		self.sheets = Google_Sheet_Service(self.scores, WEEK)
 		# We want to do things in the order of teams from the spreadsheet, not the order from ESPN 
