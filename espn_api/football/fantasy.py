@@ -4,18 +4,15 @@ from espn_api.football import Google_Sheet_Service
 from operator import attrgetter
 from collections import defaultdict
 
+# Hardcode week, league ID, and year
 WEEK = 10
 LEAGUE = League(306883, 2024)
-
 RANKING_DELTA_RANGE = 'A3:J25'
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
-
 MAGIC_ASCII_OFFSET = 66
-
 OLD_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + WEEK)
 OLD_RANKINGS_RANGE = 'HISTORY!' + OLD_RANKINGS_COLUMN + '2:' + OLD_RANKINGS_COLUMN + '13'
-
 NEW_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + WEEK + 1)
 NEW_RANKINGS_RANGE = 'HISTORY!' + NEW_RANKINGS_COLUMN + '2:' + NEW_RANKINGS_COLUMN + '13'
 
@@ -23,7 +20,7 @@ NEW_RANKINGS_RANGE = 'HISTORY!' + NEW_RANKINGS_COLUMN + '2:' + NEW_RANKINGS_COLU
 class Fantasy_Team_Performance:
 	def __init__(self, team_name, owner, score, point_differential, vs_team_name, vs_owner, lineup, bench_total):
 		self.team_name = team_name
-		self.owner = owner['firstName'] + ' ' + owner['lastName']
+		self.owner = owner
 		self.score = score
 		self.diff = point_differential
 		self.vs_team_name = vs_team_name
@@ -38,7 +35,6 @@ class Fantasy_Team_Performance:
 			best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
 			total_potential += best_player.points
 			roster.remove(best_player)
-
 		self.potential_high = round(total_potential, 2)
 		self.potential_used = self.score / total_potential
 
@@ -84,10 +80,10 @@ class Fantasy_Service:
 	# 4) wednesday morning: run do_sheet_awards via generate_awards, update_comments
 	# 5) wednesday morning: run update_previous_week
 	def __init__(self):
-		# Hardcode league ID and year
 		self.league = LEAGUE
 		self.awards = defaultdict(dict)
 		self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes, self.crashes, self.rookies = [], [], [], [], [], [], [], [], [], []
+		self.streak_dict = {}
 
 		# Process matchups
 		for matchup in self.league.box_scores(week=WEEK):
@@ -144,7 +140,6 @@ class Fantasy_Service:
 			new_player = Fantasy_Player(player.name, team_name, player.points)
 			if player.lineupSlot not in BENCHED and 'Rookie' in player.eligibleSlots:
 				self.rookies.append(new_player)
-
 			if player.lineupSlot not in ['D/ST', 'K'] and player.injuryStatus in HEALTHY and player.lineupSlot not in BENCHED and player.points < lowest_ind:
 				lowest_ind = player.points
 				lowest_ind_player = new_player
@@ -300,12 +295,13 @@ class Fantasy_Service:
 
 		# +++ AWARD player who scored the least of projected 
 		crash_burn = min(self.crashes, key=attrgetter('score'))
-		self.award(crash_burn.team_name, f'CRASH AND BURN - ({crash_burn.name}, {crash_burn.score})', 'IND_LOW', 10)
+		self.award(crash_burn.team_name, f'CRASH AND BURN - Lowest scoring non-special-teams starter ({crash_burn.name}, {crash_burn.score})', 'IND_LOW', 10)
 
 		# +++ AWARD starting rookie who scored the most points
 		rookie_cookie = max(self.rookies, key=attrgetter('score'))
 		self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - ({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
 
+		self.do_streaks()
 		# self.sheets.update_previous_week(True) #WED MORN
 		# self.do_sheet_awards() #WED MORN
 		# self.sheets.update_comments(True, self.awards) #WED MORN
@@ -352,7 +348,7 @@ class Fantasy_Service:
 				low_rank = dict_of_old_ranks[score.vs_team_name]
 				lowest_winner = score
 		if lowest_winner is not None:
-			self.award(lowest_winner.team_name, f'PUNCHING ABOVE YOUR WEIGHT - ({self.get_first_name(lowest_winner.owner)} ranked {high_rank} beat {lowest_winner.vs_owner} ranked {low_rank})', 'LOSS')
+			self.award(lowest_winner.team_name, f'PUNCHING ABOVE YOUR WEIGHT - {self.get_first_name(lowest_winner.owner)} ranked {high_rank} beat {lowest_winner.vs_owner} ranked {low_rank}', 'LOSS')
 		
 		return dict_of_old_ranks
 
@@ -433,11 +429,50 @@ class Fantasy_Service:
 			self.mistakes.append(Fantasy_Player(benched_player.name + '.' + starter.name, team_name, benched_player.points, starter.points))
 			# +++ AWARD teams for starting the wrong player by a margin =< the amount they lost by
 			if benched_player.points >= abs(diff) + starter.points:
-				return (f'BLUNDER - Starting {benched_player.name.split(None, 1)[1]} ({benched_player.points}) over {starter.name.split(None, 1)[1]} ({starter.points}) (lost by {round(abs(diff), 2)})', (benched_player.points - starter.points) * 10)
+				return (f'BLUNDER - Started {benched_player.name.split(None, 1)[1]} ({benched_player.points}) over {starter.name.split(None, 1)[1]} ({starter.points}) (lost by {round(abs(diff), 2)})', (benched_player.points - starter.points) * 10)
 			# +++ AWARD teams for starting the wrong player by a significant amount
 			elif starter.injuryStatus in HEALTHY and benched_player.points >= starter.points * 2 and benched_player.points >= starter.points + 5:
 				return (f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {benched_player.name} ({benched_player.points})', benched_player.points - starter.points)
 				
+	def do_streaks(self):
+		prev_streak_home, prev_streak_away = None, None
+		prev_streak_dict = {}
+		for i in range(1, WEEK+1):
+			# Process matchups
+			for matchup in self.league.box_scores(week=i):
+				streak_home = self.do_streak(matchup.home_team.team_name, matchup.home_score - matchup.away_score)
+				streak_away = self.do_streak(matchup.away_team.team_name, matchup.away_score - matchup.home_score)
+				if i == WEEK-1:
+					prev_streak_dict[matchup.home_team.team_name] = streak_home
+					prev_streak_dict[matchup.away_team.team_name] = streak_away
+				elif i == WEEK:
+					self.do_streak2(matchup.home_team.team_name, streak_home, prev_streak_dict)
+					self.do_streak2(matchup.away_team.team_name, streak_away, prev_streak_dict)
+				
+		for streak in self.streak_dict:
+			if int(self.streak_dict[streak][1]) > 2:
+				if self.streak_dict[streak][0] == 'W':
+					self.award(streak, f'IT HAS HAPPENED BEFORE - {self.streak_dict[streak][1]} game winning streak', 'W_STREAK')
+				else:
+					self.award(streak, f'CAN\'T GET MUCH WORSE THAN THIS - {self.streak_dict[streak][1]} game losing streak', 'L_STREAK')
+
+	def do_streak2(self, team_name, streak_present, prev_streak_dict):
+		if int(streak_present[1]) == 1:
+			if prev_streak_dict[team_name] != None and int(prev_streak_dict[team_name][1]) > 2:
+				if prev_streak_dict[team_name][0] == 'L':
+					self.award(team_name, f'NOBODY BEATS ME {int(prev_streak_dict[team_name][1]) + 1} TIMES IN A ROW - Snapped {prev_streak_dict[team_name][1]} game losing streak', 'SNAP_L')
+				else: 
+					self.award(team_name, f'POBODY\'S NERFECT - Broke {prev_streak_dict[team_name][1]} game winning streak (finally)', 'SNAP_W')
+
+	def do_streak(self, team_name, diff):
+		diff_char = 'W' if diff > 0 else 'L'
+		if self.streak_dict.get(team_name) == None or self.streak_dict[team_name][0] != diff_char:
+			self.streak_dict[team_name] = diff_char + '1'
+		else: 
+			if self.streak_dict[team_name][0] == diff_char:
+				self.streak_dict[team_name] = diff_char + str(1 + int(self.streak_dict[team_name][1]))
+		return self.streak_dict[team_name]
+	
 service = Fantasy_Service()
 
 service.generate_awards()
