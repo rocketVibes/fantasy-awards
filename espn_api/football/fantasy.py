@@ -12,6 +12,7 @@ if os.path.exists('values.json'):
 
 LEAGUE_ID = values['league_id']
 WEEK = values['week']
+SPREADSHEET_ID = values['spreadsheet_id']
 YEAR = values['year']
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
@@ -20,7 +21,7 @@ MAGIC_ASCII_OFFSET = 66
 
 # Flatten list of team scores as they come in box_score format
 class FantasyTeamPerformance:
-    def __init__(self, team_name, owner, score, score_diff, vs_team_name, vs_owner, lineup, bench_total):
+    def __init__(self, team_name, owner, score, score_diff, vs_team_name, vs_owner, lineup, bench_total, wins):
         self.team_name = team_name
         self.owner = owner
         self.score = score
@@ -29,6 +30,7 @@ class FantasyTeamPerformance:
         self.vs_owner = vs_owner
         self.lineup = lineup
         self.bench_total = bench_total
+        self.wins = wins
         # Compute a team's potential highest score given perfect start/sit decisions
         roster = lineup.copy()
         total_potential = 0
@@ -98,42 +100,24 @@ class FantasyService:
     # 4) wednesday morning: run do_sheet_awards via generate_awards, update_comments
     # 5) wednesday morning: run update_previous_week
     def __init__(self):
+        self.teams = None
+        self.sheets = None
         self.league = League(LEAGUE_ID, YEAR)
         self.awards = defaultdict(dict)
         (self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes,
          self.crashes, self.rookies) = [], [], [], [], [], [], [], [], [], []
-        self.sum_total_awards = defaultdict(dict)
 
-        print('Generating awards for WEEK: ' + str(WEEK) + '\n')
-
-        # Process matchups
-        for matchup in self.league.box_scores(week=WEEK):
-            home = matchup.home_team
-            away = matchup.away_team
-            home_owner = home.owners[0]['firstName'] + ' ' + home.owners[0]['lastName']
-            away_owner = away.owners[0]['firstName'] + ' ' + away.owners[0]['lastName']
-            self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score,
-                                 home_owner, away.team_name, get_first_name(away_owner))
-            self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score,
-                                 away_owner, home.team_name, get_first_name(home_owner))
-
-        self.sheets = Google_Sheet_Service(self.scores, WEEK)
+    def initialize_sheets(self):
+        self.sheets = Google_Sheet_Service(self.scores, WEEK, SPREADSHEET_ID)
         # We want to do things in the order of teams from the spreadsheet, not the order from ESPN
-        self.teams = []
+        self.teams, wins = [], []
         for team in self.sheets.teams:
             # Append team name to list in the Google Sheet order
             self.teams.append(team[0])
-
-    # self.sheets.update_weekly_column(True) #TUES MORN
-    # self.sheets.update_weekly_scores(True) #TUES MORN
-    # self.sheets.update_wins(True) #TUES MORN
-    # ________________________________________________________________
-    # self.sheets.get_weekly_roster_rankings(True) #WED MORN
-    # self.sheets.get_ros_roster_rankings(True) #WED MORN
-    # self.get_new_rankings() #WED MORN
+            wins.append(next((score for score in self.scores if score.team_name == team[0])).wins)
 
     # Process team performances to be iterable
-    def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner):
+    def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner, wins):
         lost_in_the_sauce = True
         lowest_ind_player = None
         # Calculate the difference between home and away scores
@@ -233,10 +217,25 @@ class FantasyService:
                        'TEAM_LOW')
         self.crashes.append(lowest_ind_player) if lowest_ind_player is not None else None
         self.scores.append(
-            FantasyTeamPerformance(team_name, owner_name, score, diff, vs_team_name, vs_owner, lineup, bench_total))
+            FantasyTeamPerformance(team_name, owner_name, score, diff, vs_team_name, vs_owner, lineup, bench_total, wins))
 
     # Iterate over scores and teams to generate awards for each team
     def generate_awards(self):
+        print('Generating awards for WEEK: ' + str(WEEK) + '\n')
+
+        # Process matchups
+        for matchup in self.league.box_scores(week=WEEK):
+            home = matchup.home_team
+            away = matchup.away_team
+            home_owner = home.owners[0]['firstName'] + ' ' + home.owners[0]['lastName']
+            away_owner = away.owners[0]['firstName'] + ' ' + away.owners[0]['lastName']
+            self.process_matchup(matchup.home_lineup, home.team_name, matchup.home_score, matchup.away_score,
+                                 home_owner, away.team_name, get_first_name(away_owner), home.outcomes.count('W'))
+            self.process_matchup(matchup.away_lineup, away.team_name, matchup.away_score, matchup.home_score,
+                                 away_owner, home.team_name, get_first_name(home_owner), away.outcomes.count('W'))
+
+        self.initialize_sheets()
+
         # Score-based awards
         # +++ AWARD the highest score of the week
         highest = max(self.scores, key=attrgetter('score'))
@@ -370,8 +369,8 @@ class FantasyService:
 
         self.calculate_ranking_awards()
         self.calculate_streak_awards()
-        # self.sheets.update_previous_week(True) #WED MORN
-        # self.sheets.update_comments(True, self.awards) #WED MORN
+        # self.sheets.tues_morn(True, wins)
+        # self.sheets.wed_morn(True, self.awards)
         self.print_awards()
 
     def calculate_ranking_awards(self):
