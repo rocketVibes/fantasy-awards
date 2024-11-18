@@ -13,14 +13,9 @@ if os.path.exists('values.json'):
 LEAGUE_ID = values['league_id']
 WEEK = values['week']
 YEAR = values['year']
-RANKING_DELTA_RANGE = 'A3:J25'
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
 MAGIC_ASCII_OFFSET = 66
-OLD_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + WEEK)
-OLD_RANKINGS_RANGE = 'HISTORY!' + OLD_RANKINGS_COLUMN + '2:' + OLD_RANKINGS_COLUMN + '13'
-NEW_RANKINGS_COLUMN = chr(MAGIC_ASCII_OFFSET + WEEK + 1)
-NEW_RANKINGS_RANGE = 'HISTORY!' + NEW_RANKINGS_COLUMN + '2:' + NEW_RANKINGS_COLUMN + '13'
 
 
 # Flatten list of team scores as they come in box_score format
@@ -128,7 +123,6 @@ class FantasyService:
         for team in self.sheets.teams:
             # Append team name to list in the Google Sheet order
             self.teams.append(team[0])
-        self.old_rankings = self.get_old_rankings()
 
     # self.sheets.update_weekly_column(True) #TUES MORN
     # self.sheets.update_weekly_scores(True) #TUES MORN
@@ -207,7 +201,7 @@ class FantasyService:
                                player.lineupSlot + '_HIGH', player.points)
 
                 # +++ AWARD players who didn't get hurt but scored nothing
-                if player.injuryStatus in ['ACTIVE', 'NORMAL'] and player.points == 0:
+                if player.injuryStatus in HEALTHY and player.points == 0:
                     self.award(team_name, f'OUT OF OFFICE - ({player.name}, 0)', 'IND_LOW', 1)
 
             # Compile lists of players at each position
@@ -244,13 +238,13 @@ class FantasyService:
     # Iterate over scores and teams to generate awards for each team
     def generate_awards(self):
         # Score-based awards
-        # +++ AWARD highest score of the week
+        # +++ AWARD the highest score of the week
         highest = max(self.scores, key=attrgetter('score'))
         self.award(highest.team_name, f'BOOM GOES THE DYNAMITE - Highest weekly score ({highest.score})', 'HIGHEST')
 
-        # +++ AWARD lowest score of the week
+        # +++ AWARD the lowest score of the week
         lowest = min(self.scores, key=attrgetter('score'))
-        # Concatenate lowest score award with sub-100 club if both apply
+        # Concatenate the lowest score award with sub-100 club if both apply
         if lowest.score < 100:
             self.awards[lowest.team_name].pop('SUB_100', None)
             lowest_award_string = f'ASSUME THE POSITION/SUB-100 CLUB - Lowest weekly score ({lowest.score})'
@@ -258,7 +252,7 @@ class FantasyService:
             lowest_award_string = f'ASSUME THE POSITION - Lowest weekly score ({lowest.score})'
         self.award(lowest.team_name, lowest_award_string, 'LOWEST')
 
-        # +++ AWARD lowest scoring winner
+        # +++ AWARD the lowest scoring winner
         fort_son = min([x for x in self.scores if x.diff > 0], key=attrgetter('score'))
         if fort_son.score < 100:
             self.awards[fort_son.team_name].pop('SUB_100', None)
@@ -267,11 +261,11 @@ class FantasyService:
             fort_son_award_string = f'FORTUNATE SON - Lowest scoring winner ({fort_son.score})'
         self.award(fort_son.team_name, fort_son_award_string, 'FORT_SON')
 
-        # +++ AWARD highest scoring loser
+        # +++ AWARD the highest scoring loser
         tough_luck = max([x for x in self.scores if x.diff < 0], key=attrgetter('score'))
         self.award(tough_luck.team_name, f'TOUGH LUCK - Highest scoring loser ({tough_luck.score})', 'TOUGH_LUCK')
 
-        # +++ AWARD largest margin of victory
+        # +++ AWARD the largest margin of victory
         big_margin = max(self.scores, key=attrgetter('diff'))
         self.award(big_margin.team_name,
                    f'TOTAL DOMINATION - Beat opponent by largest margin ({big_margin.vs_owner} '
@@ -350,7 +344,7 @@ class FantasyService:
             self.award(rb_total_high.team_name,
                        f'PUT THE TEAM ON HIS BACKS - RB corps high ({round(rb_total_high.score, 2)})', 'RB_HIGH')
 
-        # +++ AWARD RB corps high
+        # +++ AWARD bench total high
         bench_total_high = max(self.scores, key=attrgetter('bench_total'))
         self.award(bench_total_high.team_name,
                    f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})', 'BIG_BENCH')
@@ -370,14 +364,116 @@ class FantasyService:
 
         # +++ AWARD starting rookie who scored the most points
         rookie_cookie = max(self.rookies, key=attrgetter('score'))
-        self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - ({rookie_cookie.name}, {rookie_cookie.score})',
+        self.award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - Highest scoring starting rookie '
+                                            f'({rookie_cookie.name}, {rookie_cookie.score})',
                    'ROOKIE_COOKIE')
 
+        self.calculate_ranking_awards()
+        self.calculate_streak_awards()
         # self.sheets.update_previous_week(True) #WED MORN
-        # self.do_sheet_awards() #WED MORN
         # self.sheets.update_comments(True, self.awards) #WED MORN
-        self.do_streaks()
         self.print_awards()
+
+    def calculate_ranking_awards(self):
+        # Get last week's rankings to calculate any upsets
+        old_rank_col = chr(MAGIC_ASCII_OFFSET + WEEK)
+        values_old_rank = self.sheets.get_sheet_values('HISTORY!' + old_rank_col + '2:' + old_rank_col + '13')
+        if not values_old_rank:
+            print('Last week\'s rankings don\'t exist for some reason?')
+        else:
+            k = 0
+            dict_of_old_ranks = {}
+            for team_name in self.teams:
+                dict_of_old_ranks[team_name] = int(values_old_rank[k][0])
+                k += 1
+
+            lowest_winner, low_rank, high_rank = None, None, None
+            for score in self.scores:
+                dif = dict_of_old_ranks[score.team_name] - dict_of_old_ranks[score.vs_team_name]
+                if score.diff > 0 and dif >= 3:
+                    high_rank = dict_of_old_ranks[score.team_name]
+                    low_rank = dict_of_old_ranks[score.vs_team_name]
+                    lowest_winner = score
+            if lowest_winner is not None:
+                self.award(lowest_winner.team_name,
+                           f'PUNCHING ABOVE YOUR WEIGHT - {get_first_name(lowest_winner.owner)} ranked {high_rank} '
+                           f'beat {lowest_winner.vs_owner} ranked {low_rank}',
+                           'LOSS')
+
+            # Get this week's forecasted rankings to see if there is a new leader or a new bitch, or if rank changed 3+
+            new_rank_col = chr(MAGIC_ASCII_OFFSET + WEEK + 1)
+            values_new_rank = self.sheets.get_sheet_values('HISTORY!' + new_rank_col + '2:' + new_rank_col + '13')
+            if not values_new_rank:
+                print('This week\'s rankings haven\'t been calculated yet.')
+            else:
+                j = 0
+                for team_name in self.teams:
+                    score = next(score for score in self.scores if score.team_name == team_name)
+                    # +++ AWARD newly top-ranked team
+                    if values_new_rank[j][0] == '1' and dict_of_old_ranks[team_name] != 1:
+                        self.award(team_name,
+                                   f'I, FOR ONE, WELCOME OUR NEW {get_first_name(score.owner).upper()} '
+                                   f'OVERLORD - New top ranked team ',
+                                   'RANK')
+                    elif values_new_rank[j][0] == '12' and dict_of_old_ranks[team_name] != 12:
+                        self.award(team_name,
+                                   f'BITCH OF THE WEEK - New lowest ranked team',
+                                   'RANK')
+                    # Calculate rank diff from last week to this week
+                    fid = dict_of_old_ranks[team_name] - int(values_new_rank[j][0])
+                    if abs(fid) > 2:
+                        # +++ AWARD teams who fell 3+ spots in the rankings
+                        if fid < 0:
+                            self.award(team_name, f'FREE FALLIN\' - Dropped {fid} spots in the rankings',
+                                       'FREE_FALL')
+                        # +++ AWARD teams who rose 3+ spots in the rankings
+                        else:
+                            self.award(team_name, f'TO THE MOON! - Rose {fid} spots in the rankings', 'TO_MOON')
+                    j += 1
+
+    def calculate_streak_awards(self):
+        # Calculate current streak and streak changes for each team
+        for team in self.league.teams:
+            # Use the current streak on the team class if we are at the current week, otherwise calculate
+            if team.outcomes[WEEK] != 'U':
+                streak_type = team.outcomes[WEEK - 1]
+                streak_length = 1
+                for i in range(WEEK - 2, 1, -1):
+                    if team.outcomes[i] == streak_type:
+                        streak_length += 1
+                    else:
+                        break
+            else:
+                streak_type = team.streak_type[0]
+                streak_length = team.streak_length
+            # Whatever the current streak type is, the one previously must have been the opposite
+            old_streak_type = 'W' if streak_type == 'L' else 'L'
+            old_streak_length = 0
+            # Start from the week previous to the beginning of the current streak to compute the previous streak
+            for i in range(WEEK - streak_length - 1, 0, -1):
+                if team.outcomes[i] == old_streak_type:
+                    old_streak_length += 1
+                # If the previous streak has ended, break
+                else:
+                    break
+            # If the current streak is more than 2 games
+            if streak_length > 2:
+                if streak_type == 'WIN':
+                    self.award(team.team_name, f'IT HAS HAPPENED BEFORE - {streak_length} game winning streak',
+                               'W_STREAK')
+                else:
+                    self.award(team.team_name,
+                               f'CAN\'T GET MUCH WORSE THAN THIS - {streak_length} game losing streak', 'L_STREAK')
+            # If the current streak snapped a previously significant streak
+            elif team.streak_length == 1:
+                if old_streak_length > 2:
+                    if old_streak_type == 'LOSS':
+                        self.award(team.team_name, f'NOBODY BEATS ME {old_streak_length + 1} TIMES IN A ROW - '
+                                                   f'Snapped {old_streak_length} game losing streak', 'SNAP_L')
+                    else:
+                        self.award(team.team_name,
+                                   f'POBODY\'S NERFECT - Broke {old_streak_length} game winning streak (finally)',
+                                   'SNAP_W')
 
     # Add awards with proper weighting to global self.awards
     def award(self, team_name, award_string, award_type, magnitude=0):
@@ -399,73 +495,6 @@ class FantasyService:
                     print(award.award_string)
             i += 1
             print()
-
-    # GET latest power rankings from Google Sheet and award big upsets
-    def get_old_rankings(self):
-        values_old_rank = self.sheets.get_sheet_values(OLD_RANKINGS_RANGE)
-        if not values_old_rank:
-            print('No data found in last week\'s power rankings.')
-            return
-
-        i = 0
-        dict_of_old_ranks = {}
-        for team_name in self.teams:
-            dict_of_old_ranks[team_name] = int(values_old_rank[i][0])
-            i += 1
-
-        lowest_winner, low_rank, high_rank = None, None, None
-        for score in self.scores:
-            dif = dict_of_old_ranks[score.team_name] - dict_of_old_ranks[score.vs_team_name]
-            if score.diff > 0 and dif >= 3:
-                high_rank = dict_of_old_ranks[score.team_name]
-                low_rank = dict_of_old_ranks[score.vs_team_name]
-                lowest_winner = score
-        if lowest_winner is not None:
-            self.award(lowest_winner.team_name,
-                       f'PUNCHING ABOVE YOUR WEIGHT - {get_first_name(lowest_winner.owner)} ranked {high_rank} '
-                       f'beat {lowest_winner.vs_owner} ranked {low_rank}',
-                       'LOSS')
-
-        return dict_of_old_ranks
-
-    # GET this week's power rankings and compare them to last week's to see if there's a new overlord
-    def get_new_rankings(self):
-        values_new_rank = self.sheets.get_sheet_values(NEW_RANKINGS_RANGE)
-        if not values_new_rank:
-            print('No data found in this week\'s power rankings.')
-            return
-
-        i = 0
-        for team_name in self.teams:
-            score = next(score for score in self.scores if score.team_name == team_name)
-            # +++ AWARD newly top-ranked team
-            if values_new_rank[i][0] == '1' and self.old_rankings[team_name] != 1:
-                self.award(team_name,
-                           f'I, FOR ONE, WELCOME OUR NEW {get_first_name(score.owner).upper()} '
-                           f'OVERLORD - New top ranked team ',
-                           'RANK')
-            i += 1
-
-    # GET trends for each team generated by sheet for ranking-trend-based awards
-    def do_sheet_awards(self):
-        values_rank_delta = self.sheets.get_sheet_values(RANKING_DELTA_RANGE)
-        if not values_rank_delta:
-            print('No data found in rankings delta column.')
-            return
-
-        i = 0
-        for row in values_rank_delta:
-            if i % 2 == 0:
-                # If there is a ranking change in the cell, and the delta is greater than 2
-                if len(row) > 0 and len(row[3]) == 2 and int(row[3][1]) > 2:
-                    # +++ AWARD teams who fell 3+ spots in the rankings
-                    if '▼' in row[3]:
-                        self.award(row[1].split('\n', 1)[0], 'FREE FALLIN\' - Dropped 3 spots in the rankings',
-                                   'FREE_FALL')
-                    # +++ AWARD teams who rose 3+ spots in the rankings
-                    else:
-                        self.award(row[1].split('\n', 1)[0], 'TO THE MOON! - Rose 3 spots in the rankings', 'TO_MOON')
-            i += 1
 
     # Compute the highest scorer for given list of players
     def compute_top_scorer(self, players, grouped_stat=False):
@@ -509,49 +538,6 @@ class FantasyService:
                   and benched_player.points >= starter.points + 5):
                 return (f'START/SIT, GET HIT - Started {starter.name} ({starter.points}) over {benched_player.name} '
                         f'({benched_player.points})', benched_player.points - starter.points)
-
-    def do_streaks(self):
-        for team in self.league.teams:
-            # Whatever the current streak type is, the one previously must have been the opposite
-            if team.outcomes[WEEK] != 'U':
-                streak_type = team.outcomes[WEEK - 1]
-                streak_length = 1
-                for i in range(WEEK - 2, 1, -1):
-                    if team.outcomes[i] == streak_type:
-                        streak_length += 1
-                    else:
-                        break
-            else:
-                streak_type = team.streak_type[0]
-                streak_length = team.streak_length
-
-            old_streak_type = 'W' if streak_type == 'L' else 'L'
-            old_streak_length = 0
-            # Start from the week previous to the beginning of the current streak to compute the previous streak
-            for i in range(WEEK - streak_length - 1, 0, -1):
-                if team.outcomes[i] == old_streak_type:
-                    old_streak_length += 1
-                # If the previous streak has ended, break
-                else:
-                    break
-            # If the current streak is more than 2 games
-            if streak_length > 2:
-                if streak_type == 'WIN':
-                    self.award(team.team_name, f'IT HAS HAPPENED BEFORE - {streak_length} game winning streak',
-                               'W_STREAK')
-                else:
-                    self.award(team.team_name,
-                               f'CAN\'T GET MUCH WORSE THAN THIS - {streak_length} game losing streak', 'L_STREAK')
-            # If the current streak snapped a previously significant streak
-            elif team.streak_length == 1:
-                if old_streak_length > 2:
-                    if old_streak_type == 'LOSS':
-                        self.award(team.team_name, f'NOBODY BEATS ME {old_streak_length + 1} TIMES IN A ROW - '
-                                                   f'Snapped {old_streak_length} game losing streak', 'SNAP_L')
-                    else:
-                        self.award(team.team_name,
-                                   f'POBODY\'S NERFECT - Broke {old_streak_length} game winning streak (finally)',
-                                   'SNAP_W')
 
 
 service = FantasyService()
