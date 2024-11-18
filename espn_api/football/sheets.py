@@ -29,8 +29,8 @@ class Google_Sheet_Service:
 	def __init__(self, scores, week):
 		self.scores = scores
 		self.week = week
-		if os.path.exists('spreadsheet_id.json'):
-			with open('spreadsheet_id.json') as f:
+		if os.path.exists('values.json'):
+			with open('values.json') as f:
 				self.SPREADSHEET_ID = json.load(f)['id']
 
 		creds = None

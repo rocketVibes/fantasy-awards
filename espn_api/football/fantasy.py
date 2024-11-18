@@ -3,10 +3,16 @@ from espn_api.football import Google_Sheet_Service
 
 from operator import attrgetter
 from collections import defaultdict
+import os.path
+import json
 
-# Hardcode week, league ID, and year
-WEEK = 10
-LEAGUE = League(306883, 2024)
+if os.path.exists('values.json'):
+    with open('values.json') as f:
+        values = json.load(f)
+
+LEAGUE_ID = values['league_id']
+WEEK = values['week']
+YEAR = values['year']
 RANKING_DELTA_RANGE = 'A3:J25'
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
@@ -97,11 +103,13 @@ class FantasyService:
     # 4) wednesday morning: run do_sheet_awards via generate_awards, update_comments
     # 5) wednesday morning: run update_previous_week
     def __init__(self):
-        self.league = LEAGUE
+        self.league = League(LEAGUE_ID, YEAR)
         self.awards = defaultdict(dict)
         (self.scores, self.qbs, self.tes, self.ks, self.wrs, self.rbs, self.dsts, self.mistakes,
          self.crashes, self.rookies) = [], [], [], [], [], [], [], [], [], []
-        self.streak_dict = {}
+        self.sum_total_awards = defaultdict(dict)
+
+        print('Generating awards for WEEK: ' + str(WEEK) + '\n')
 
         # Process matchups
         for matchup in self.league.box_scores(week=WEEK):
@@ -505,23 +513,35 @@ class FantasyService:
     def do_streaks(self):
         for team in self.league.teams:
             # Whatever the current streak type is, the one previously must have been the opposite
-            old_streak_type = 'WIN' if team.streak_type == 'LOSS' else 'LOSS'
+            if team.outcomes[WEEK] != 'U':
+                streak_type = team.outcomes[WEEK - 1]
+                streak_length = 1
+                for i in range(WEEK - 2, 1, -1):
+                    if team.outcomes[i] == streak_type:
+                        streak_length += 1
+                    else:
+                        break
+            else:
+                streak_type = team.streak_type[0]
+                streak_length = team.streak_length
+
+            old_streak_type = 'W' if streak_type == 'L' else 'L'
             old_streak_length = 0
             # Start from the week previous to the beginning of the current streak to compute the previous streak
-            for i in range(WEEK - team.streak_length - 1, 0, -1):
-                if team.outcomes[i] in old_streak_type:
+            for i in range(WEEK - streak_length - 1, 0, -1):
+                if team.outcomes[i] == old_streak_type:
                     old_streak_length += 1
                 # If the previous streak has ended, break
                 else:
                     break
             # If the current streak is more than 2 games
-            if team.streak_length > 2:
-                if team.streak_type == 'WIN':
-                    self.award(team.team_name, f'IT HAS HAPPENED BEFORE - {team.streak_length} game winning streak',
+            if streak_length > 2:
+                if streak_type == 'WIN':
+                    self.award(team.team_name, f'IT HAS HAPPENED BEFORE - {streak_length} game winning streak',
                                'W_STREAK')
                 else:
                     self.award(team.team_name,
-                               f'CAN\'T GET MUCH WORSE THAN THIS - {team.streak_length} game losing streak', 'L_STREAK')
+                               f'CAN\'T GET MUCH WORSE THAN THIS - {streak_length} game losing streak', 'L_STREAK')
             # If the current streak snapped a previously significant streak
             elif team.streak_length == 1:
                 if old_streak_length > 2:
