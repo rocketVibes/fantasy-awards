@@ -26,7 +26,7 @@ HISTORY_RANKINGS_RANGE = 'TEAMS!D3:D14'
 WINS_RANGE = 'POINTS!B18:C29'
 
 
-class Google_Sheet_Service:
+class GoogleSheetService:
     def __init__(self, scores, week, spreadsheet_id):
         self.scores = scores
         self.week = week
@@ -98,10 +98,12 @@ class Google_Sheet_Service:
         self.update_weekly_scores(do_sheets_calls)
         self.update_wins(do_sheets_calls, wins)
 
-    def wed_morn(self, do_sheets_calls, awards):
+    def wed_morn(self, do_sheets_calls):
         self.get_weekly_roster_rankings(do_sheets_calls)
         self.get_ros_roster_rankings(do_sheets_calls)
         self.update_previous_week(do_sheets_calls)
+
+    def final(self, do_sheets_calls, awards):
         self.update_comments(do_sheets_calls, awards)
 
     # GET previous weeks rankings and UPDATE them in HISTORY of sheet
