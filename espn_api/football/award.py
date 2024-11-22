@@ -14,7 +14,6 @@ HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
 awards = defaultdict(dict)
 MAGIC_ASCII_OFFSET = 66
-mistakes = []
 
 
 def award_blunder(team_name, benched_player, starter, diff):
@@ -236,7 +235,7 @@ def award_big_bench(scores):
           f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})', 'BIG_BENCH')
 
 
-def award_biggest_mistake():
+def award_biggest_mistake(mistakes):
     # +++ AWARD worst start/sit mistake
     biggest_mistake = max(mistakes, key=attrgetter('diff'))
     award(biggest_mistake.team_name,

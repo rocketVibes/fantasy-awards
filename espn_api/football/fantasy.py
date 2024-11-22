@@ -77,7 +77,7 @@ class FantasyService:
         award_deep_threat(self.teams, self.players['WR'])
         award_on_his_backs(self.teams, self.players['RB'])
         award_big_bench(self.scores)
-        award_biggest_mistake()
+        award_biggest_mistake(self.mistakes)
         award_crash_burn(self.crashes)
         award_rookie_cookie(self.rookies)
         self.evaluate_streaks()
