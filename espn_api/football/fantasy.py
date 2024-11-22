@@ -17,6 +17,19 @@ IRRELEVANT = ['K', 'BE', 'D/ST', 'IR']
 MAGIC_ASCII_OFFSET = 66
 
 
+def get_first_name(name):
+    if 'Aaron' in name:
+        return 'Yates'
+    elif 'Nathan' in name:
+        return 'Nate'
+    elif 'Dustin' in name:
+        return 'Libby'
+    elif 'Zachary' in name:
+        return 'Zach'
+    else:
+        return name.split(' ', 1)[0]
+
+
 class FantasyService:
     # 0) tues morning: change week number to current week
     # 1) tues morning: run generate awards, copy to keep
@@ -30,7 +43,7 @@ class FantasyService:
         self.sheets = None
         self.league = League(LEAGUE_ID, YEAR)
         self.players = defaultdict(list)
-        self.scores, self.crashes, self.rookies = [], [], []
+        self.scores, self.crashes, self.rookies, self.mistakes = [], [], [], []
 
     # Iterate over scores and teams to generate awards for each team
     def generate_awards(self):
@@ -71,15 +84,15 @@ class FantasyService:
         award_streaks(self.league.teams, WEEK)
         # self.sheets.wed_morn(True)
         # self.sheets.final(True, self.awards)
-        print_awards(self.teams)
+        self.print_awards()
 
     # Process team performances to be iterable
     def process_matchup(self, lineup, team_name, score, opp_score, owner_name, vs_team_name, vs_owner, wins):
         # Calculate the difference between home and away scores
         diff = score - opp_score
         total = score + opp_score
-        mistake = evaluate_start_decisions(team_name, lineup, diff)
-        self.mistakes.append(mistake) if mistake is not None else None
+
+        self.evaluate_start_decisions(team_name, lineup, diff)
 
         award_cripple_fight(team_name, vs_owner, total)
         award_sub_100(team_name, score)
@@ -132,6 +145,35 @@ class FantasyService:
                 bench_total,
                 wins))
 
+    def evaluate_start_decisions(self, team_name, lineup, diff):
+        # Evaluate starters vs benched players at each position
+        for pos in POSITIONS:
+            lineup_slot = pos[0]
+            if len(pos) > 1:
+                lineup_slot = '/'.join(pos)
+
+            starters = [player for player in lineup if player.lineupSlot == lineup_slot]
+            benches = [player for player in lineup if player.lineupSlot in BENCHED and player.position in lineup_slot]
+            # Find the worst starter vs the best benched player at a given position
+            starter = min(starters, key=attrgetter('points'))
+            benched_player = max(benches, key=attrgetter('points')) if len(benches) > 0 else None
+
+            if benched_player is not None:
+                # If there is a benched player who outperformed, and the team lost then evaluate awards
+                if benched_player.points >= abs(diff) + starter.points:
+                    award_blunder(team_name, benched_player, starter, diff)
+                    self.mistakes.append(FantasyPlayer(benched_player.name + '.' + starter.name,
+                                                       team_name,
+                                                       benched_player.points,
+                                                       starter.points))
+                elif (starter.injuryStatus in HEALTHY and benched_player.points >= starter.points * 2
+                      and benched_player.points >= starter.points + 5):
+                    award_start_sit(team_name, benched_player, starter)
+                    self.mistakes.append(FantasyPlayer(benched_player.name + '.' + starter.name,
+                                                       team_name,
+                                                       benched_player.points,
+                                                       starter.points))
+
     def initialize_sheets(self):
         self.sheets = GoogleSheetService(self.scores, WEEK, SPREADSHEET_ID)
         # We want to do things in the order of teams from the spreadsheet, not the order from ESPN
@@ -142,8 +184,8 @@ class FantasyService:
             wins.append(next((score for score in self.scores if score.team_name == team[0])).wins)
         # self.sheets.tues_morn(True, wins)
 
+    # Get last week's rankings to calculate any upsets
     def evaluate_streaks(self):
-        # Get last week's rankings to calculate any upsets
         old_rank_col = chr(MAGIC_ASCII_OFFSET + WEEK)
         values_old_rank = self.sheets.get_sheet_values('HISTORY!' + old_rank_col + '2:' + old_rank_col + '13')
         if not values_old_rank:
@@ -157,6 +199,19 @@ class FantasyService:
                 print('This week\'s rankings haven\'t been calculated yet.')
             else:
                 award_new_top_bottom(self.teams, self.scores, values_new_rank, dict_of_old_ranks)
+
+    # Print all awards
+    def print_awards(self):
+        i = 1
+        for team_name in self.teams:
+            print(f'{i}) {team_name}')
+            award_values = awards[team_name].values()
+            for award_value in award_values:
+                if (len(awards) <= 4 or award_value.award_string !=
+                        'LOST IN THE SAUCE - No non-special-teams starter scored 3+ more than projected'):
+                    print(award_value.award_string)
+            i += 1
+            print()
 
 
 service = FantasyService()
