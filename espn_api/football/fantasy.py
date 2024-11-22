@@ -1,5 +1,6 @@
 from espn_api.football import League
 from espn_api.football import GoogleSheetService
+from espn_api.football import FantasyTeamPerformance
 from espn_api.football.award import *
 
 if os.path.exists('values.json'):
@@ -12,34 +13,8 @@ SPREADSHEET_ID = values['spreadsheet_id']
 YEAR = values['year']
 HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
+IRRELEVANT = ['K', 'BE', 'D/ST', 'IR']
 MAGIC_ASCII_OFFSET = 66
-
-
-# Flatten list of team scores as they come in box_score format
-class FantasyTeamPerformance:
-    def __init__(self, team_name, owner, score, score_diff, vs_team_name, vs_owner, lineup, bench_total, wins):
-        self.team_name = team_name
-        self.owner = owner
-        self.score = score
-        self.diff = score_diff
-        self.vs_team_name = vs_team_name
-        self.vs_owner = vs_owner
-        self.lineup = lineup
-        self.bench_total = bench_total
-        self.wins = wins
-        # Compute a team's potential highest score given perfect start/sit decisions
-        roster = lineup.copy()
-        total_potential = 0
-        # Add individual contributors to the highest potential and remove them from the pool
-        for pos in [['QB'], ['K'], ['D/ST'], ['RB'], ['RB'], ['TE'], ['WR'], ['WR'], ['WR', 'TE']]:
-            best_player = max([player for player in roster if player.position in pos], key=attrgetter('points'))
-            total_potential += best_player.points
-            roster.remove(best_player)
-        self.potential_high = round(total_potential, 2)
-        self.potential_used = self.score / total_potential
-
-    def get_potential_used(self):
-        return '{:,.2%}'.format(self.potential_used)
 
 
 class FantasyService:
@@ -55,7 +30,7 @@ class FantasyService:
         self.sheets = None
         self.league = League(LEAGUE_ID, YEAR)
         self.players = defaultdict(list)
-        self.scores, self.mistakes, self.crashes, self.rookies = [], [], [], []
+        self.scores, self.crashes, self.rookies = [], [], []
 
     # Iterate over scores and teams to generate awards for each team
     def generate_awards(self):
@@ -89,7 +64,7 @@ class FantasyService:
         award_deep_threat(self.teams, self.players['WR'])
         award_on_his_backs(self.teams, self.players['RB'])
         award_big_bench(self.scores)
-        award_biggest_mistake(self.mistakes)
+        award_biggest_mistake()
         award_crash_burn(self.crashes)
         award_rookie_cookie(self.rookies)
         self.evaluate_streaks()
@@ -105,9 +80,11 @@ class FantasyService:
         total = score + opp_score
         mistake = evaluate_start_decisions(team_name, lineup, diff)
         self.mistakes.append(mistake) if mistake is not None else None
+
         award_cripple_fight(team_name, vs_owner, total)
         award_sub_100(team_name, score)
         award_madden_rookie(team_name, vs_owner, diff)
+
         lost_in_the_sauce = True
         lowest_ind_player = None
         bench_total = 0
@@ -115,31 +92,45 @@ class FantasyService:
         for player in lineup:
             # Make pile of all players to iterate over
             new_player = FantasyPlayer(player.name, team_name, player.points)
-            if player.lineupSlot not in BENCHED and 'Rookie' in player.eligibleSlots:
-                self.rookies.append(new_player)
-            if (player.lineupSlot not in ['D/ST', 'K'] and player.injuryStatus in HEALTHY
-                    and player.lineupSlot not in BENCHED and player.points < lowest_ind):
-                lowest_ind = player.points
-                lowest_ind_player = new_player
-            award_burgers(team_name, player)
-            if player.lineupSlot in BENCHED:
-                bench_total += player.points
-            if player.lineupSlot not in ['K', 'BE', 'D/ST', 'IR']:
+
+            if player.lineupSlot not in IRRELEVANT:
+                if player.injuryStatus in HEALTHY and player.points < lowest_ind:
+                    lowest_ind = player.points
+                    lowest_ind_player = new_player
+
                 # If any players scored 3+ more than projected, the team is not lost in the sauce
                 if player.points >= player.projected_points + 3:
                     lost_in_the_sauce = False
+
+                award_burgers(team_name, player)
                 award_daily_double(team_name, player)
                 award_out_of_office(team_name, player)
                 award_injury_insult(team_name, player, diff)
+
+            if player.lineupSlot in BENCHED:
+                bench_total += player.points
+            elif 'Rookie' in player.eligibleSlots:
+                self.rookies.append(new_player)
+
             # Compile lists of players at each position
-            self.players[player.position].append(new_player)
+            self.players[player.lineupSlot].append(new_player) if player.lineupSlot != 'WR/TE' else (
+                self.players[player.position].append(new_player))
             award_kick_rocks(team_name, player)
             award_best_defense(team_name, player)
+
         award_lost_sauce(team_name, lost_in_the_sauce)
         self.crashes.append(lowest_ind_player) if lowest_ind_player is not None else None
         self.scores.append(
-            FantasyTeamPerformance(team_name, owner_name, score, diff, vs_team_name, vs_owner, lineup, bench_total,
-                                   wins))
+            FantasyTeamPerformance(
+                team_name,
+                owner_name,
+                score,
+                diff,
+                vs_team_name,
+                vs_owner,
+                lineup,
+                bench_total,
+                wins))
 
     def initialize_sheets(self):
         self.sheets = GoogleSheetService(self.scores, WEEK, SPREADSHEET_ID)

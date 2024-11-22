@@ -14,6 +14,7 @@ HEALTHY = ['ACTIVE', 'NORMAL']
 BENCHED = ['BE', 'IR']
 awards = defaultdict(dict)
 MAGIC_ASCII_OFFSET = 66
+mistakes = []
 
 
 def evaluate_start_decisions(team_name, lineup, diff):
@@ -26,14 +27,23 @@ def evaluate_start_decisions(team_name, lineup, diff):
         benches = [player for player in lineup if player.lineupSlot in BENCHED and player.position in lineup_slot]
         # Find the worst starter vs the best benched player at a given position
         starter = min(starters, key=attrgetter('points'))
-        benched_chad = max(benches, key=attrgetter('points')) if len(benches) > 0 else None
+        benched_player = max(benches, key=attrgetter('points')) if len(benches) > 0 else None
         # If there is a benched player who outperformed, and the team lost then evaluate awards
-        if benched_chad is not None and diff < 0 and benched_chad.points > starter.points:
-            award_blunder(team_name, benched_chad, starter, diff)
-            award_start_sit(team_name, benched_chad, starter)
-            new_player = FantasyPlayer(benched_chad.name + '.' + starter.name, team_name, benched_chad.points, starter.points)
-            print(new_player.name)
-            return new_player
+        if benched_player is not None:
+            # print(benched_player.name + ' ' + starter.name + ' ' + str(benched_player.points - starter.points))
+            if benched_player.points >= abs(diff) + starter.points:
+                award_blunder(team_name, benched_player, starter, diff)
+                mistakes.append(FantasyPlayer(benched_player.name + '.' + starter.name,
+                                              team_name,
+                                              benched_player.points,
+                                              starter.points))
+            elif (starter.injuryStatus in HEALTHY and benched_player.points >= starter.points * 2
+                  and benched_player.points >= starter.points + 5):
+                award_start_sit(team_name, benched_player, starter)
+                mistakes.append(FantasyPlayer(benched_player.name + '.' + starter.name,
+                                              team_name,
+                                              benched_player.points,
+                                              starter.points))
 
 
 def award_blunder(team_name, benched_player, starter, diff):
@@ -95,7 +105,7 @@ def award_daily_double(team_name, player):
 
 def award_out_of_office(team_name, player):
     # +++ AWARD players who didn't get hurt but scored nothing
-    if player.injuryStatus in HEALTHY and player.points == 0:
+    if player.injuryStatus in HEALTHY and player.lineupSlot != 'TE' and player.points == 0:
         award(team_name, f'OUT OF OFFICE - ({player.name}, 0)', 'IND_LOW', 1)
 
 
@@ -255,7 +265,7 @@ def award_big_bench(scores):
           f'BIGLY BENCH - Bench total high ({round(bench_total_high.bench_total, 2)})', 'BIG_BENCH')
 
 
-def award_biggest_mistake(mistakes):
+def award_biggest_mistake():
     # +++ AWARD worst start/sit mistake
     biggest_mistake = max(mistakes, key=attrgetter('diff'))
     award(biggest_mistake.team_name,
@@ -319,7 +329,7 @@ def award_new_top_bottom(teams, scores, values_new_rank, dict_of_old_ranks):
         if abs(fid) > 2:
             # +++ AWARD teams who fell 3+ spots in the rankings
             if fid < 0:
-                award(team_name, f'FREE FALLIN\' - Dropped {fid} spots in the rankings',
+                award(team_name, f'FREE FALLIN\' - Dropped {abs(fid)} spots in the rankings',
                       'FREE_FALL')
             # +++ AWARD teams who rose 3+ spots in the rankings
             else:
