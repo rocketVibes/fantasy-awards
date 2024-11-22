@@ -5,7 +5,8 @@ __all__ = ['League',
            'BoxPlayer',
            'GoogleSheetService',
            'FantasyPlayer',
-           'FantasyAward'
+           'FantasyAward',
+           'FantasyTeamPerformance'
            ]
 
 from .league import League
@@ -16,3 +17,4 @@ from .box_player import BoxPlayer
 from .sheets import GoogleSheetService
 from .fantasy_player import FantasyAward
 from .fantasy_player import FantasyPlayer
+from .fantasy_player import FantasyTeamPerformance
