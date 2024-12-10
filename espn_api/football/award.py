@@ -138,7 +138,7 @@ def award_total_domination(scores):
     # +++ AWARD the largest margin of victory
     big_margin = max(scores, key=attrgetter('diff'))
     award(big_margin.team_name,
-          f'TOTAL DOMINATION - Beat opponent by largest margin ({big_margin.vs_owner} '
+          f'TOTAL DOMINATION - Won by largest margin ({big_margin.vs_owner} '
           f'by {round(big_margin.diff, 2)})',
           'BIG_MARGIN')
 
@@ -147,12 +147,12 @@ def award_second_banana(scores):
     # +++ AWARD team that lost with the smallest margin of victory
     small_margin = min([x for x in scores if x.diff > 0], key=attrgetter('diff'))
     award(small_margin.vs_team_name,
-          f'SECOND BANANA - Beaten by slimmest margin '
+          f'SECOND BANANA - Lost by slimmest margin '
           f'({get_first_name(small_margin.owner)} by {round(small_margin.diff, 2)})',
           'SMALL_MARGIN_LOSER')
     # +++ AWARD team that won with the smallest margin of victory
     award(small_margin.team_name,
-          f'GEEKED FOR THE EKE - Beat opponent by slimmest margin ({small_margin.vs_owner} '
+          f'GEEKED FOR THE EKE - Won by slimmest margin ({small_margin.vs_owner} '
           f'by {round(small_margin.diff, 2)})',
           'SMALL_MARGIN')
 
@@ -171,17 +171,34 @@ def award_none_crystal(scores):
                                    f'of possible {potential_low.potential_high} points', 'POTENTIAL_LOW')
 
 
+def award_rookie_cookie(rookies):
+    # +++ AWARD starting rookie who scored the most points
+    rookie_cookie = max(rookies, key=attrgetter('score'))
+    award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - Highest scoring starting rookie '
+                                   f'({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
+
+
+def check_rookie(team_name, award_string):
+    if awards[team_name].get('ROOKIE_COOKIE') is not None:
+        awards[team_name].pop('ROOKIE_COOKIE')
+        return award_string + '/ROOKIE GETS A COOKIE'
+    else:
+        return award_string
+
+
 def award_caller_baller(teams, quarterbacks):
     # +++ AWARD QB high
     qb_high = compute_top_scorer(teams, quarterbacks)
-    award(qb_high.team_name, f'PLAY CALLER BALLER - QB high ({qb_high.get_last_name()}, {qb_high.score})',
-          'QB_HIGH', qb_high.score * 10)
+    award_string = check_rookie(qb_high.team_name, 'PLAY CALLER BALLER')
+    award(qb_high.team_name, f'{award_string} - ({qb_high.get_last_name()}, {qb_high.score})', 'QB_HIGH',
+          qb_high.score * 10)
 
 
 def award_tightest_end(teams, tight_ends):
     # +++ AWARD TE high
     te_high = compute_top_scorer(teams, tight_ends)
-    award(te_high.team_name, f'TIGHTEST END - TE high ({te_high.get_last_name()}, {te_high.score})', 'TE_HIGH',
+    award_string = check_rookie(te_high.team_name, 'TIGHTEST END')
+    award(te_high.team_name, f'{award_string} - ({te_high.get_last_name()}, {te_high.score})', 'TE_HIGH',
           te_high.score * 10)
 
 
@@ -202,15 +219,17 @@ def award_kick_fast(teams, kickers):
 def award_ground_delivery(teams, running_backs):
     # +++ AWARD individual RB high
     rb_high = compute_top_scorer(teams, running_backs)
-    award(rb_high.team_name, f'SPECIAL DELIVERY: GROUND - RB high ({rb_high.get_last_name()}, '
-                             f'{round(rb_high.score, 2)})', 'RB_HIGH', rb_high.score * 100)
+    award_string = check_rookie(rb_high.team_name, 'SPECIAL DELIVERY: GROUND')
+    award(rb_high.team_name, f'{award_string} - ({rb_high.get_last_name()}, {rb_high.score})',
+          'RB_HIGH', rb_high.score * 10)
 
 
 def award_air_delivery(teams, wide_receivers):
     # +++ AWARD individual WR high
     wr_high = compute_top_scorer(teams, wide_receivers)
-    award(wr_high.team_name, f'SPECIAL DELIVERY: AIR - WR high ({wr_high.get_last_name()}, '
-                             f'{round(wr_high.score, 2)})', 'WR_HIGH', wr_high.score * 100)
+    award_string = check_rookie(wr_high.team_name, 'SPECIAL DELIVERY: AIR')
+    award(wr_high.team_name, f'{award_string} - ({wr_high.get_last_name()}, {wr_high.score})',
+          'WR_HIGH', wr_high.score * 10)
 
 
 def award_deep_threat(teams, wide_receivers):
@@ -250,13 +269,6 @@ def award_crash_burn(healthy_starters_who_scored_zero):
     award(crash_burn.team_name,
           f'CRASH AND BURN - Lowest scoring non-special-teams starter ({crash_burn.name}, {crash_burn.score})',
           'IND_LOW', 10)
-
-
-def award_rookie_cookie(rookies):
-    # +++ AWARD starting rookie who scored the most points
-    rookie_cookie = max(rookies, key=attrgetter('score'))
-    award(rookie_cookie.team_name, f'ROOKIE GETS A COOKIE - Highest scoring starting rookie '
-                                   f'({rookie_cookie.name}, {rookie_cookie.score})', 'ROOKIE_COOKIE')
 
 
 def award_upsets(teams, scores, values_old_rank):
@@ -374,3 +386,16 @@ def award(team_name, award_string, award_type, magnitude=0):
     # If there is no award of that type or if the new one exceeds the existing one, add the new one
     if best is None or magnitude > best.magnitude:
         awards[team_name][award_type] = FantasyAward(award_string, team_name, magnitude)
+
+
+def get_first_name(name):
+    if 'Aaron' in name:
+        return 'Yates'
+    elif 'Nathan' in name:
+        return 'Nate'
+    elif 'Dustin' in name:
+        return 'Libby'
+    elif 'Zachary' in name:
+        return 'Zach'
+    else:
+        return name.split(' ', 1)[0]

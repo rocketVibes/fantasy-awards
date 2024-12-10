@@ -1,3 +1,6 @@
  # installs dependencies from ./setup.py, and the package itself,
  # in editable mode
  -e .
+setuptools~=68.2.0
+requests~=2.32.3
+google~=3.0.0
