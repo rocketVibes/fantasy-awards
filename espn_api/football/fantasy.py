@@ -213,38 +213,6 @@ class FantasyService:
             i += 1
             print()
 
-    # def print_me(self):
-    #     for team in self.league.teams:
-    #         if team.team_name == 'Easy, Breecy, Beautiful':
-    #             print('team_id: ' + str(team.team_id))
-    #             print('team_abbrev: ' + team.team_abbrev)
-    #             print('team_name: ' + team.team_name)
-    #             print('division_id: ' + str(team.division_id))
-    #             print('division_name: ' + team.division_name)
-    #             print('wins: ' + str(team.wins))
-    #             print('losses: ' + str(team.losses))
-    #             print('ties: ' + str(team.ties))
-    #             print('points_for: ' + str(team.points_for))
-    #             print('points_against: ' + str(team.points_against))
-    #             print('acquisitions: ' + str(team.acquisitions))
-    #             print('acquisition_budget_spent: ' + str(team.acquisition_budget_spent))
-    #             print('drops: ' + str(team.drops))
-    #             print('trades: ' + str(team.trades))
-    #             print('playoff_pct: ' + str(team.playoff_pct))
-    #             print('draft_projected_rank: ' + str(team.draft_projected_rank))
-    #             print('streak_length: ' + str(team.streak_length))
-    #             print('streak_type: ' + team.streak_type)
-    #             print('standing: ' + str(team.standing))
-    #             print('final_standing: ' + str(team.final_standing))
-    #             print('waiver_rank: ' + str(team.waiver_rank))
-    #             print('logo_url: ' + team.logo_url)
-    #             print('roster: ' + str(team.roster))
-    #             print('schedule: ' + str(team.schedule))
-    #             print('scores: ' + str(team.scores))
-    #             print('outcomes: ' + str(team.outcomes))
-    #             print('mov: ' + str(team.mov))
-    #             print('owners: ' + str(team.owners))
-
 
 service = FantasyService()
 
